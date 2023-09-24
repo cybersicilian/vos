@@ -1,7 +1,7 @@
-FROM node:18
+FROM oven/bun
 
 WORKDIR /usr/src/app
 
 COPY . .
-EXPOSE 15192
-CMD ["node", "index.js"]
+EXPOSE 15912
+CMD ["bun", "run", "index.js"]
