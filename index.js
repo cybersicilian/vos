@@ -369,8 +369,8 @@ class Card {
     let ctr = 0;
     if (this.canBePlayed({ owner, opps, deck, card: this })) {
       for (let ability of this.orderAbilities()) {
-        let c2 = choices ? choices[ctr] : undefined;
-        ability.fireEvents("play", { owner, opps, deck, card: this, choices: c2 });
+        let c = choices ? choices[ctr] : undefined;
+        ability.fireEvents("play", { owner, opps, deck, card: this, choices: c });
         ctr++;
       }
     }
@@ -407,7 +407,7 @@ class Card {
       return "";
     });
   }
-  getTraits(c2) {
+  getTraits(c) {
     let abilities = this.orderAbilities();
     let trait_list = abilities.map((ability) => {
       return ability.ai();
@@ -415,7 +415,7 @@ class Card {
     let traits = { profile: {} };
     for (let profile of trait_list) {
       for (let key of Object.keys(profile)) {
-        let value = new ResolverCallback(profile[key]).resolve(c2);
+        let value = new ResolverCallback(profile[key]).resolve(c);
         if (traits.profile[key]) {
           traits.profile[key] += value;
         } else {
@@ -596,8 +596,8 @@ class Bot {
       }
     }
   }
-  evaluate(card, c2) {
-    let weights = card.getTraits(c2);
+  evaluate(card, c) {
+    let weights = card.getTraits(c);
     let sum = 0;
     for (const weight in weights.profile) {
       if (this.profile[weight]) {
@@ -802,8 +802,8 @@ class AbilityIncreasePower extends BaseAbility {
       }
     });
     this.sai({
-      improvesCard: (c2) => {
-        return (c2 ? c2.pow ? c2.pow() : 1 : 1) + qty;
+      improvesCard: (c) => {
+        return (c ? c.pow ? c.pow() : 1 : 1) + qty;
       }
     });
     this.setFormula(`{pow} + ${qty}`);
@@ -923,27 +923,27 @@ class AbilityRemoveOtherCopiesFromGame extends BaseAbility {
       let players = abilityArgs.opps.concat(abilityArgs.owner);
       let toRemove = [];
       for (let player of players) {
-        toRemove.push(...player.cih().filter((c2) => {
-          if (!c2 || !abilityArgs.card) {
+        toRemove.push(...player.cih().filter((c) => {
+          if (!c || !abilityArgs.card) {
             return false;
           }
-          return c2.getName() === abilityArgs.card.getName();
+          return c.getName() === abilityArgs.card.getName();
         }));
       }
-      toRemove.push(...abilityArgs.deck.discardPile.filter((c2) => {
-        if (!c2 || !abilityArgs.card) {
+      toRemove.push(...abilityArgs.deck.discardPile.filter((c) => {
+        if (!c || !abilityArgs.card) {
           return false;
         }
-        return c2.getName() === abilityArgs.card.getName();
+        return c.getName() === abilityArgs.card.getName();
       }));
-      toRemove.push(...abilityArgs.deck.filter((c2) => {
-        if (!c2 || !abilityArgs.card) {
+      toRemove.push(...abilityArgs.deck.filter((c) => {
+        if (!c || !abilityArgs.card) {
           return false;
         }
-        return c2.getName() === abilityArgs.card.getName();
+        return c.getName() === abilityArgs.card.getName();
       }));
-      toRemove.forEach((c2) => {
-        c2.remove();
+      toRemove.forEach((c) => {
+        c.remove();
       });
       abilityArgs.card.skipDiscard();
       abilityArgs.deck.shuffle();
@@ -1015,7 +1015,7 @@ class CostAbility extends BaseAbility {
     });
     this.setFormula(`${amt} - {pow}`);
     this.sai({
-      spendResource: (c2) => this.calcFormula(c2)
+      spendResource: (c) => this.calcFormula(c)
     });
   }
 }
@@ -1183,7 +1183,7 @@ class AbilityAddEventToAll extends BaseAbility {
     this.sai({
       addEvents: events.length,
       affectsSelf: events.length,
-      affectsOpponents: (c2) => c2.opps.length * events.length
+      affectsOpponents: (c) => c.opps.length * events.length
     });
   }
 }
@@ -1241,8 +1241,8 @@ class AbilityUnlockUpgrade extends BaseAbility {
     this.sai({
       changesGame: 1,
       affectsSelf: 1,
-      unlockUpgrades: (c2) => {
-        return c2.owner.upgrades().filter((check) => check.getName() === upgrade.getName()).length == 0 ? 1 : 0;
+      unlockUpgrades: (c) => {
+        return c.owner.upgrades().filter((check) => check.getName() === upgrade.getName()).length == 0 ? 1 : 0;
       }
     });
   }
@@ -1345,8 +1345,8 @@ class AbilityAddTurnsOpp extends BaseAbility {
     this.setFormula(`{pow} + ${qty}`);
     this.sai({
       oppWinSetback: qty,
-      affectsOpponents: (c2) => qty / c2.opps.length,
-      winProgress: (c2) => qty / c2.opps.length / 2
+      affectsOpponents: (c) => qty / c.opps.length,
+      winProgress: (c) => qty / c.opps.length / 2
     });
   }
 }
@@ -1360,7 +1360,7 @@ class AbilityAntivaxxer extends BaseAbility {
     this.sai({
       meme: 100,
       changesGame: 1,
-      affectsSelf: (c2) => c2.owner.getProp("antivaxxer") ? 0 : -10
+      affectsSelf: (c) => c.owner.getProp("antivaxxer") ? 0 : -10
     }, {
       pbp: ["antivaxxer", "zombie", "res_life"]
     });
@@ -1402,11 +1402,11 @@ var DeckList2 = {
       new OnDrawAbility(new AbilityAddEventToSelf(["temp_draw"], (abilityArgs) => {
         let card = abilityArgs.card;
         let new_cards = card.explode(abilityArgs).sort((a, b) => Math.random() - 0.5);
-        new_cards.forEach((c2, i) => {
+        new_cards.forEach((c, i) => {
           if (i == 0) {
-            c2.move(Zone.HAND, abilityArgs);
+            c.move(Zone.HAND, abilityArgs);
           } else {
-            c2.move(Zone.DISCARD, abilityArgs);
+            c.move(Zone.DISCARD, abilityArgs);
           }
         });
       }).setText("The next card you draw explodes. Keep one fragment at random, and discard the rest.")),
@@ -1438,7 +1438,7 @@ var DeckList2 = {
         for (let ability of card.getAbilities()) {
           abilityArgs.owner.getProp("dna_research").push(ability);
         }
-        abilityArgs.deck.discardPile = abilityArgs.deck.discardPile.filter((c2) => c2 !== card);
+        abilityArgs.deck.discardPile = abilityArgs.deck.discardPile.filter((c) => c !== card);
       }).sai({
         affectsSelf: 1,
         unlockUpgrades: 1,
@@ -1463,7 +1463,7 @@ var DeckList2 = {
         let opponent = madeChoices[0];
         let card = opponent.cih()[Math.floor(Math.random() * opponent.cih().length)];
         if (card) {
-          opponent.setCiH(opponent.cih().filter((c2) => c2 !== card));
+          opponent.setCiH(opponent.cih().filter((c) => c !== card));
           let new_cards = card.explode({
             owner: opponent,
             opps: [...abilityArgs.opps, abilityArgs.owner].filter((p) => p !== opponent),
@@ -1471,8 +1471,8 @@ var DeckList2 = {
             card
           });
           let toDiscard = Math.ceil(new_cards.length / 2);
-          new_cards.forEach((c2, i) => {
-            c2.move(Zone.HAND, abilityArgs, {
+          new_cards.forEach((c, i) => {
+            c.move(Zone.HAND, abilityArgs, {
               to: opponent
             });
           });
@@ -1493,8 +1493,8 @@ var DeckList2 = {
         abilityArgs.deck.discardPile = [];
         for (let card of cards) {
           let new_cards = card.explode(abilityArgs);
-          new_cards.forEach((c2, i) => {
-            c2.move(Zone.DISCARD, abilityArgs);
+          new_cards.forEach((c, i) => {
+            c.move(Zone.DISCARD, abilityArgs);
           });
         }
       }).sai({
@@ -1542,8 +1542,8 @@ var DeckList2 = {
         abilityArgs.deck.discardPile = [];
         for (let card of cards) {
           let new_cards = card.explode(abilityArgs);
-          new_cards.forEach((c2, i) => {
-            c2.move(Zone.DISCARD, abilityArgs);
+          new_cards.forEach((c, i) => {
+            c.move(Zone.DISCARD, abilityArgs);
           });
         }
       }).sai({
@@ -1570,7 +1570,7 @@ var DeckList2 = {
             while (cardArgs2.owner.cih().length > cardArgs2.owner.getHandsize() && cardArgs2.owner.cih().length >= 2) {
               let randos = cardArgs2.owner.cih().sort(() => Math.random() - 0.5).slice(0, 2);
               let newCard = Card.combine(...randos);
-              randos.forEach((c2) => c2.remove(cardArgs2));
+              randos.forEach((c) => c.remove(cardArgs2));
               newCard.setProp(`hybrid`, true);
               newCard.move(Zone.HAND, cardArgs2);
             }
@@ -1625,8 +1625,8 @@ var DeckList2 = {
           resource: "tadbucks"
         }],
         locked: false
-      }, (c2, u) => {
-        c2.owner.addResource("wood", Math.floor(10 * Math.pow(1.15, u.lvl())));
+      }, (c, u) => {
+        c.owner.addResource("wood", Math.floor(10 * Math.pow(1.15, u.lvl())));
       }, true, 1.25))
     ]),
     new Card(`Food Shipment`, [
@@ -1638,8 +1638,8 @@ var DeckList2 = {
           resource: "tadbucks"
         }],
         locked: false
-      }, (c2, u) => {
-        c2.owner.addResource("food", Math.floor(10 * Math.pow(1.15, u.lvl())));
+      }, (c, u) => {
+        c.owner.addResource("food", Math.floor(10 * Math.pow(1.15, u.lvl())));
       }, true, 1.25))
     ]),
     new Card(`Metal Shipment`, [
@@ -1651,8 +1651,8 @@ var DeckList2 = {
           resource: "tadbucks"
         }],
         locked: false
-      }, (c2, u) => {
-        c2.owner.addResource("metal", Math.floor(10 * Math.pow(1.15, u.lvl())));
+      }, (c, u) => {
+        c.owner.addResource("metal", Math.floor(10 * Math.pow(1.15, u.lvl())));
       }, true, 1.25))
     ]),
     new Card(`Stone Shipment`, [
@@ -1664,8 +1664,8 @@ var DeckList2 = {
           resource: "tadbucks"
         }],
         locked: false
-      }, (c2, u) => {
-        c2.owner.addResource("stone", Math.floor(10 * Math.pow(1.15, u.lvl())));
+      }, (c, u) => {
+        c.owner.addResource("stone", Math.floor(10 * Math.pow(1.15, u.lvl())));
       }, true, 1.25))
     ]),
     new Card(`Gather Wood`, [
@@ -1874,8 +1874,8 @@ var DeckList2 = {
           resource: "turns"
         }],
         locked: false
-      }, (c2) => {
-        c2.owner.addResource("snowroot", 1);
+      }, (c) => {
+        c.owner.addResource("snowroot", 1);
       }, true, 1.1), false)
     ]).setRarity(Rarity.BASIC)
   ],
@@ -1943,8 +1943,8 @@ var DeckList2 = {
           amt: 15,
           resource: "tadbucks"
         }]
-      }, (c2) => {
-        c2.opps.forEach((opponent) => {
+      }, (c) => {
+        c.opps.forEach((opponent) => {
           opponent.addTurns(2);
         });
       }, true, 1.35)).setText("Unlocks telemarketing as a way to waste your opponents time.")
@@ -2139,11 +2139,11 @@ var DeckList2 = {
         a.owner.setProp("points", a.owner.getProp("points") + a.card.pow(), a);
       }),
       new BaseAbility("Randomly add points to all cards in the deck", [], (a2, m) => {
-        for (let c2 of a2.deck) {
-          if (c2.getProp("point_value")) {
-            c2.setProp("point_value", c2.getProp("point_value") + Math.floor(Math.random() * c2.pow()));
+        for (let c of a2.deck) {
+          if (c.getProp("point_value")) {
+            c.setProp("point_value", c.getProp("point_value") + Math.floor(Math.random() * c.pow()));
           } else {
-            c2.setProp("point_value", [-c2.pow(), 0, 0, 1, 1, c2.pow()].sort((a, b) => Math.random() - 0.5)[0]);
+            c.setProp("point_value", [-c.pow(), 0, 0, 1, 1, c.pow()].sort((a, b) => Math.random() - 0.5)[0]);
           }
         }
       })
@@ -2165,28 +2165,8 @@ var DeckList2 = {
   basic: [
     new Card(`Just Do Better`, [
       new AbilityAddDeck("romance", 75, true).setText(`Invent romance. Add it to the game.`),
-      new AbilityAddResource(5, "love")
-    ]).setRarity(Rarity.RARE),
-    new Card(`Oozify`, [
-      new BaseAbility(`Choose a card in your hand. Split it into {formula} weaker cards.`, [
-        { pointer: Pointer.CARD_IN_HAND_MOST_POWER, choice: Choices.CARD_IN_HAND }
-      ], (a, m) => {
-        let card = m[0];
-        let cards = [];
-        for (let i = 0;i < a.card.pow() + 1; i++) {
-          let newCard = card.clone().setPow(Math.floor(1 / a.card.pow() * card.pow()));
-          newCard.setName(`Oozing ${newCard.getName()}`);
-          newCard.setZone(Zone.HAND);
-          newCard.setRarity(Math.max(0, newCard.getRarity() - 1));
-          cards.push(newCard);
-        }
-        card.remove(a);
-        cards.forEach((card2) => {
-          card2.move(Zone.HAND, c);
-        });
-      }).setCanPlay((c2) => {
-        return c2.owner.cih().length > 1;
-      }).setFormula(`{pow} + 1`)
+      new AbilityAddResource(5, "love"),
+      new AbilityRemoveOtherCopiesFromGame
     ]).setRarity(Rarity.RARE),
     new Card(`You Could Make a Religion Outta This`, [
       new AbilityAddDeck(`faith_deck`, 75, true).setText("Invent religion."),
@@ -2293,8 +2273,8 @@ var DeckList2 = {
     new Card(`Encrust in Gold`, [
       new BaseAbility(`Increase a card in your hands rarity. It gains {formula} power`, [
         { choice: Choices.CARD_IN_HAND, pointer: Pointer.CARD_IN_HAND_LEAST_POWER }
-      ], (a, c2) => {
-        let card = c2[0];
+      ], (a, c) => {
+        let card = c[0];
         card.setRarity(card.getRarity() + 1);
         card.setPow(card.pow() + a.card.pow() + 2);
         card.setName(`Golden ${card.getName()} \uD83D\uDCB0\uD83D\uDCB0`);
@@ -2305,7 +2285,7 @@ var DeckList2 = {
     ]).setRarity(Rarity.UNCOMMON),
     new Card(`Rough Breakup`, [
       new AbilityExplodeCard,
-      new BaseAbility(`Reduce the power of cards in your hand by {formula}`, [], (a, c2) => {
+      new BaseAbility(`Reduce the power of cards in your hand by {formula}`, [], (a, c) => {
         a.owner.cih().forEach((card) => {
           card.setPow(card.pow() - a.card.pow());
         });
@@ -2339,8 +2319,8 @@ var DeckList2 = {
       new AbilityAddDeck("life_deck", 50, true)
     ]).setRarity(Rarity.RARE),
     new Card(`Proletariat Revolution`, [
-      new PlayerPredicateRestrictionAbility(`Play only if you're the first player`, (c2) => {
-        return c2.owner.getTurnPlacement() === 0;
+      new PlayerPredicateRestrictionAbility(`Play only if you're the first player`, (c) => {
+        return c.owner.getTurnPlacement() === 0;
       }),
       new BaseAbility(`Draw {formula} cards.`, [], (abilityArgs, madeChoices) => {
         if (abilityArgs.owner.getTurnPlacement() === 0) {
@@ -2740,19 +2720,19 @@ class Player {
   }
   draw(deck, qty = 1) {
     let cards = deck.draw(qty);
-    for (let c2 of cards) {
-      if (!c2) {
+    for (let c of cards) {
+      if (!c) {
         continue;
       }
-      c2.draw(this, [], deck);
+      c.draw(this, [], deck);
       this.fireEvents("draw", {
         owner: this,
         opps: [],
         deck,
-        card: c2
+        card: c
       });
       if (qty >= 1) {
-        this.cards = this.cards.concat(c2);
+        this.cards = this.cards.concat(c);
       }
     }
   }
