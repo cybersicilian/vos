@@ -2264,11 +2264,7 @@ var DeckList2 = {
       new AbilityDrawCard(1)
     ]).setRarity(Rarity.MYTHIC),
     new Card(`\u26A1\u26A1 Supercharge \u26A1\u26A1`, [
-      new AbilityIncreasePower(0),
-      new BaseAbility(`\u26A1\u26A1`, [], (a, m) => {
-        let card = m[0];
-        card.setName(`Empowered ${card.getName()}`);
-      }).setFormula(`{pow}`)
+      new AbilityIncreasePower(0)
     ]).setRarity(Rarity.UNCOMMON),
     new Card(`Gifts of Giving`, [
       new AbilityDrawCard(1),
