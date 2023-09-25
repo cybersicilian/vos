@@ -3454,9 +3454,16 @@ class GameServer {
               }
               server.players[id2].play(card, opps, server.deck, choiceObjs);
               for (let socket of Object.keys(server.sockets)) {
-                server.sockets[socket].send(JSON.stringify({
-                  type: CommEnum.PLAY_PHASE_CONFIRM
-                }));
+                if (server.players[socket].noInterrupts() || server.players[socket].isBot()) {
+                  server.sockets[socket].send(JSON.stringify({
+                    type: CommEnum.PLAY_PHASE_CONFIRM
+                  }));
+                } else {
+                  server.sockets[socket].send(JSON.stringify({
+                    type: CommEnum.SEND_INTERRUPTS,
+                    interrupts: server.players[socket].getInterrupts()
+                  }));
+                }
               }
             } else if (server.activeTurn === id2) {
               ws.send(JSON.stringify({
