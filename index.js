@@ -2176,6 +2176,7 @@ var DeckList2 = {
         for (let i = 0;i < a.card.pow() + 1; i++) {
           let newCard = card.clone().setPow(Math.floor(1 / a.card.pow() * card.pow()));
           newCard.setName(`Oozing ${newCard.getName()}`);
+          newCard.setZone(Zone.HAND);
           newCard.setRarity(Math.max(0, newCard.getRarity() - 1));
           cards.push(newCard);
         }
