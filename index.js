@@ -3313,7 +3313,7 @@ class GameServer {
         let result = JSON.parse(message);
         let id2 = result.id;
         let opps = Object.keys(server.players).filter((key) => key !== id2).map((key) => server.players[key]);
-        console.log(message);
+        console.log(result);
         switch (result.type) {
           case CommEnum.SET_NAME:
             if (result.name.length < 1) {
