@@ -3225,7 +3225,7 @@ class GameServer {
           config: this.serverConfig,
           logs: this.sendableLogs.map((x) => x.toString()),
           discard: this.deck.discardPile.map((x) => ({
-            name: x.getName(),
+            name: x.getDisplayName(),
             text: x.getFormulatedText({
               owner: this.players[id],
               opps,
