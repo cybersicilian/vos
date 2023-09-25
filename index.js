@@ -3475,7 +3475,7 @@ class GameServer {
             break;
           case CommEnum.PLAY_PHASE_CONFIRM:
             server.nextTurn[id2] = true;
-            if (!server.players[id2].noInterrupts() || !server.players[id2].isBot()) {
+            if (!server.players[id2].noInterrupts() && !server.players[id2].isBot()) {
               server.nextTurn[id2] = false;
               server.updateInterrupts(id2);
             } else if (Object.keys(server.nextTurn).every((e) => {
