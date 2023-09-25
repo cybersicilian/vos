@@ -843,7 +843,7 @@ class AbilitySymDraw extends BaseAbility {
 // logic/abilities/AbilityDiscardOppCard.ts
 class AbilityDiscardOppCard extends BaseAbility {
   constructor(qty) {
-    super(`Opponent discards {formula} cards`, [
+    super(`Opponent discards {formula} cards at random`, [
       { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_MOST_CARDS }
     ], (abilityArgs, madeChoices) => {
       let opponent = madeChoices[0];
