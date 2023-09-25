@@ -3453,9 +3453,11 @@ class GameServer {
                 server.gameLog(`${server.players[id2].getLogText()} plays ${card.getLogText()}.`);
               }
               server.players[id2].play(card, opps, server.deck, choiceObjs);
-              ws.send(JSON.stringify({
-                type: CommEnum.PLAY_PHASE_CONFIRM
-              }));
+              for (let socket of Object.keys(server.sockets)) {
+                server.sockets[socket].send(JSON.stringify({
+                  type: CommEnum.PLAY_PHASE_CONFIRM
+                }));
+              }
             } else if (server.activeTurn === id2) {
               ws.send(JSON.stringify({
                 type: CommEnum.ERROR,
