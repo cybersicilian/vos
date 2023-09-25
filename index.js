@@ -2379,12 +2379,6 @@ var DeckList2 = {
 };
 var DeckList_default = DeckList2;
 
-// logic/structure/utils/TurnInterrupt.ts
-var TurnInterrupt;
-(function(TurnInterrupt2) {
-  TurnInterrupt2["DISCARD_FROM_HAND"] = "dfh";
-})(TurnInterrupt || (TurnInterrupt = {}));
-
 // logic/gameplay/player/Player.ts
 class Player {
   name;
@@ -2400,7 +2394,6 @@ class Player {
   bot = false;
   host = false;
   botProfile = undefined;
-  turnInterrupts = [];
   eventList = {};
   constructor(cards, deck) {
     this.name = Math.random().toString(36).substring(7);
@@ -2482,29 +2475,6 @@ class Player {
         }
       }
     });
-  }
-  resolveNextInterrupt(ti, value, cardArgs) {
-    let type = Object.values(TurnInterrupt).find((x) => x == ti);
-    let index = this.turnInterrupts.indexOf(type);
-    if (index > 0) {
-      switch (type) {
-        case TurnInterrupt.DISCARD_FROM_HAND:
-          let idInHand = parseInt(value) || 0;
-          if (idInHand >= 0 && idInHand < this.cih().length) {
-            this.discard(this.cih()[idInHand], cardArgs.deck);
-          }
-          break;
-      }
-    }
-  }
-  getInterrupts() {
-    if (this.cih().length == 0) {
-      this.turnInterrupts = this.turnInterrupts.filter((x) => x != TurnInterrupt.DISCARD_FROM_HAND);
-    }
-    return this.turnInterrupts;
-  }
-  noInterrupts() {
-    return !this.getInterrupts() || this.turnInterrupts.length == 0;
   }
   addResource(key, amt) {
     if (key.startsWith("res_"))
@@ -2814,20 +2784,12 @@ class Player {
       this.discard(card, cardArgs.deck);
     }
   }
-  addInterrupt(ti, cardArgs) {
-    this.turnInterrupts.push(ti);
-    this.fireEvents("new_interrupts", cardArgs);
-  }
   discardChoose(cardArgs) {
-    if (!this.isBot()) {
-      this.addInterrupt(TurnInterrupt.DISCARD_FROM_HAND, cardArgs);
+    let card = this.weightedDiscard(cardArgs);
+    if (card) {
+      this.discard(card, cardArgs.deck);
     } else {
-      let card = this.weightedDiscard(cardArgs);
-      if (card) {
-        this.discard(card, cardArgs.deck);
-      } else {
-        this.discardRandom(cardArgs);
-      }
+      this.discardRandom(cardArgs);
     }
   }
   randomCard() {
@@ -2981,7 +2943,6 @@ function adjustAIWeights(num_sims = 100, console_output = true) {
 // runtime/Server.ts
 class GameServer {
   players = {};
-  nextTurn = {};
   sockets = {};
   deck;
   turnPhase = 0;
@@ -3032,6 +2993,7 @@ class GameServer {
     return name.split(" ").map((s) => s[0].toUpperCase() + s.substring(1).toLowerCase()).join(" ");
   }
   log(content) {
+    console.log(content);
     this.logEntries.push(content.toString());
   }
   gameLog(content) {
@@ -3049,14 +3011,10 @@ class GameServer {
     this.players[id].addEvent("new_upgrade", (cardArgs) => {
       this.updateUpgradeShop(id);
     });
-    this.players[id].addEvent("new_interrupts", (cardArgs) => {
-      this.updateInterrupts(id);
-    });
     if (this.activeTurn === "") {
       this.activeTurn = id;
       this.players[id].setHost();
     }
-    this.nextTurn[id] = false;
     return { id, index: Object.keys(this.players).length - 1 };
   }
   addBot() {
@@ -3065,7 +3023,6 @@ class GameServer {
     }
     let id = Math.random().toString(36).substring(7);
     this.players[id] = new Player(this.serverConfig.startingHand, this.deck).setTurnPlacement(Object.keys(this.players).length).setName(GameServer.createName()).setBot();
-    this.nextTurn[id] = false;
     this.gameLog(`${this.players[id].getLogText()} joined the game as a bot.`);
     return id;
   }
@@ -3118,9 +3075,6 @@ class GameServer {
   incrementTurn() {
     this.gameLog(`${this.getActive().getLogText()} ended their turn.`);
     this.gameLog(`===NEW TURN===`);
-    for (let key of Object.keys(this.nextTurn)) {
-      this.nextTurn[key] = false;
-    }
     this.turnPhase = 0;
     if (Object.values(this.players).length == 0) {
       this.activeTurn = "";
@@ -3182,13 +3136,6 @@ class GameServer {
     }
     this.getActive().weightedDiscardToHand(baseArgs);
     this.incrementTurn();
-  }
-  updateInterrupts(id) {
-    let ws = this.sockets[id];
-    ws.send(JSON.stringify({
-      type: CommEnum.SEND_INTERRUPTS,
-      interrupts: this.players[id].getInterrupts()
-    }));
   }
   updateUpgradeShop(id) {
     let ws = this.sockets[id];
@@ -3286,11 +3233,14 @@ class GameServer {
     Object.keys(this.players).forEach((key) => this.sendState(key));
   }
   adjustAIHeuristics(num_sims = 250) {
+    console.log(`Adjusting AI heuristics...`);
     let mods = adjustAIWeights(num_sims, false);
     for (let botName of Object.keys(BehaviorProfile_default)) {
+      console.log(`\n=== ${botName} ===`);
       for (let mod of Object.keys(mods)) {
         if (BehaviorProfile_default[botName][mod]) {
           let newMod = Math.round(BehaviorProfile_default[botName][mod] * mods[mod] * 100) / 100;
+          console.log(`${mod}: ${BehaviorProfile_default[botName][mod]} -> ${newMod}`);
           BehaviorProfile_default[botName][mod] = newMod;
         }
       }
@@ -3416,13 +3366,12 @@ class GameServer {
             let choiceObjs = choices.map((selections, abilityId) => {
               let ability = card.orderAbilities()[abilityId];
               return selections.map((selection, choiceId) => {
-                let p = {
+                let type = ability.informChoices({
                   owner: server.players[id2],
                   opps,
                   deck: server.deck,
                   card
-                };
-                let type = ability.informChoices(p)[choiceId];
+                })[choiceId];
                 switch (type.choice) {
                   case Choices.OPPONENT:
                   case Choices.PLAYER:
@@ -3452,16 +3401,7 @@ class GameServer {
                 server.gameLog(`${server.players[id2].getLogText()} plays ${card.getLogText()}.`);
               }
               server.players[id2].play(card, opps, server.deck, choiceObjs);
-              for (let socket of Object.keys(server.sockets)) {
-                if (server.players[socket].noInterrupts() || server.players[socket].isBot()) {
-                  server.sockets[socket].send(JSON.stringify({
-                    type: CommEnum.PLAY_PHASE_CONFIRM,
-                    id: socket
-                  }));
-                } else {
-                  server.updateInterrupts(socket);
-                }
-              }
+              server.incrementPhase();
             } else if (server.activeTurn === id2) {
               ws.send(JSON.stringify({
                 type: CommEnum.ERROR,
@@ -3478,25 +3418,6 @@ class GameServer {
                 message: "This card can't be played - not playable."
               }));
             }
-            break;
-          case CommEnum.PLAY_PHASE_CONFIRM:
-            server.nextTurn[id2] = true;
-            if (!server.players[id2].noInterrupts() && !server.players[id2].isBot()) {
-              server.nextTurn[id2] = false;
-              server.updateInterrupts(id2);
-            } else if (Object.keys(server.nextTurn).every((e) => {
-              return server.nextTurn[e] && (server.players[e].noInterrupts() || server.players[e].isBot());
-            })) {
-              server.incrementPhase();
-            }
-            break;
-          case CommEnum.RESOLVE_INTERRUPT:
-            server.players[id2].resolveNextInterrupt(result.interrupt, result.value, {
-              owner: server.players[id2],
-              opps,
-              deck: server.deck
-            });
-            server.updateInterrupts(id2);
             break;
           case CommEnum.DISCARD_TO_HAND:
             let toDiscard = result.idInHand;
