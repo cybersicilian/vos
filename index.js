@@ -251,7 +251,7 @@ class Card {
     return !this.discardable;
   }
   getProps() {
-    return this.props;
+    return { ...this.props, zone: this.zone, power: this.power };
   }
   getProp(prop) {
     return this.getProps()[prop];
