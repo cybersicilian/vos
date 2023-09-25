@@ -877,7 +877,9 @@ class AbilityDiscardOppCard extends BaseAbility {
 class AbilityDiscardSelfCard extends BaseAbility {
   constructor(qty) {
     super(`Discard {formula} cards at random`, [], (abilityArgs, madeChoices) => {
-      abilityArgs.owner.discardRandom(abilityArgs);
+      for (let i = 0;i < this.calcFormula(abilityArgs); i++) {
+        abilityArgs.owner.discardRandom(abilityArgs);
+      }
     });
     this.sai({
       affectsSelf: (cardArgs) => cardArgs.card.pow() + qty,
@@ -908,11 +910,9 @@ class AbilityDiscardHandDrawCards extends BaseAbility {
       }
     ], (abilityArgs, madeChoices) => {
       let target = madeChoices.pop();
-      target.cih().forEach((card) => {
-        card.move(Zone.DISCARD, abilityArgs, {
-          from: target
-        });
-      });
+      while (target.cih().length > 0) {
+        target.discardRandom(abilityArgs);
+      }
       target.draw(abilityArgs.deck, qty + abilityArgs.card.pow());
     });
     this.sai({
@@ -954,7 +954,7 @@ class AbilityRemoveOtherCopiesFromGame extends BaseAbility {
         return c.getName() === abilityArgs.card.getName();
       }));
       toRemove.forEach((c) => {
-        c.remove();
+        c.remove(abilityArgs);
       });
       abilityArgs.card.skipDiscard();
       abilityArgs.deck.shuffle();
