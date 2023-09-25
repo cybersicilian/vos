@@ -843,7 +843,7 @@ class AbilitySymDraw extends BaseAbility {
 // logic/abilities/AbilityDiscardOppCard.ts
 class AbilityDiscardOppCard extends BaseAbility {
   constructor(qty) {
-    super(`Opponent discards {formula} cards at random`, [
+    super(`Opponent discards {formula} cards`, [
       { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_MOST_CARDS }
     ], (abilityArgs, madeChoices) => {
       let opponent = madeChoices[0];
@@ -3313,6 +3313,7 @@ class GameServer {
         let result = JSON.parse(message);
         let id2 = result.id;
         let opps = Object.keys(server.players).filter((key) => key !== id2).map((key) => server.players[key]);
+        console.log(message);
         switch (result.type) {
           case CommEnum.SET_NAME:
             if (result.name.length < 1) {
