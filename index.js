@@ -851,7 +851,7 @@ class AbilityDiscardOppCard extends BaseAbility {
         if (opponent.inHand() === 0) {
           break;
         }
-        opponent.discardChoose(abilityArgs);
+        opponent.discardRandom(abilityArgs);
       }
     });
     this.sai({
@@ -2498,10 +2498,13 @@ class Player {
     }
   }
   getInterrupts() {
+    if (this.cih().length == 0) {
+      this.turnInterrupts = this.turnInterrupts.filter((x) => x != TurnInterrupt.DISCARD_FROM_HAND);
+    }
     return this.turnInterrupts;
   }
   noInterrupts() {
-    return this.turnInterrupts.length == 0;
+    return !this.getInterrupts() || this.turnInterrupts.length == 0;
   }
   addResource(key, amt) {
     if (key.startsWith("res_"))
@@ -3029,7 +3032,6 @@ class GameServer {
     return name.split(" ").map((s) => s[0].toUpperCase() + s.substring(1).toLowerCase()).join(" ");
   }
   log(content) {
-    console.log(content);
     this.logEntries.push(content.toString());
   }
   gameLog(content) {
@@ -3185,7 +3187,7 @@ class GameServer {
     let ws = this.sockets[id];
     ws.send(JSON.stringify({
       type: CommEnum.SEND_INTERRUPTS,
-      interrupts: this.getActive().getInterrupts()
+      interrupts: this.players[id].getInterrupts()
     }));
   }
   updateUpgradeShop(id) {
@@ -3284,14 +3286,11 @@ class GameServer {
     Object.keys(this.players).forEach((key) => this.sendState(key));
   }
   adjustAIHeuristics(num_sims = 250) {
-    console.log(`Adjusting AI heuristics...`);
     let mods = adjustAIWeights(num_sims, false);
     for (let botName of Object.keys(BehaviorProfile_default)) {
-      console.log(`\n=== ${botName} ===`);
       for (let mod of Object.keys(mods)) {
         if (BehaviorProfile_default[botName][mod]) {
           let newMod = Math.round(BehaviorProfile_default[botName][mod] * mods[mod] * 100) / 100;
-          console.log(`${mod}: ${BehaviorProfile_default[botName][mod]} -> ${newMod}`);
           BehaviorProfile_default[botName][mod] = newMod;
         }
       }
@@ -3313,7 +3312,6 @@ class GameServer {
         let result = JSON.parse(message);
         let id2 = result.id;
         let opps = Object.keys(server.players).filter((key) => key !== id2).map((key) => server.players[key]);
-        console.log(result);
         switch (result.type) {
           case CommEnum.SET_NAME:
             if (result.name.length < 1) {
@@ -3424,7 +3422,6 @@ class GameServer {
                   deck: server.deck,
                   card
                 };
-                console.log(ability.informChoices(p));
                 let type = ability.informChoices(p)[choiceId];
                 switch (type.choice) {
                   case Choices.OPPONENT:
@@ -3458,7 +3455,8 @@ class GameServer {
               for (let socket of Object.keys(server.sockets)) {
                 if (server.players[socket].noInterrupts() || server.players[socket].isBot()) {
                   server.sockets[socket].send(JSON.stringify({
-                    type: CommEnum.PLAY_PHASE_CONFIRM
+                    type: CommEnum.PLAY_PHASE_CONFIRM,
+                    id: socket
                   }));
                 } else {
                   server.updateInterrupts(socket);
