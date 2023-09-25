@@ -3418,12 +3418,14 @@ class GameServer {
             let choiceObjs = choices.map((selections, abilityId) => {
               let ability = card.orderAbilities()[abilityId];
               return selections.map((selection, choiceId) => {
-                let type = ability.informChoices({
+                let p = {
                   owner: server.players[id2],
                   opps,
                   deck: server.deck,
                   card
-                })[choiceId];
+                };
+                console.log(ability.informChoices(p));
+                let type = ability.informChoices(p)[choiceId];
                 switch (type.choice) {
                   case Choices.OPPONENT:
                   case Choices.PLAYER:
@@ -3459,10 +3461,7 @@ class GameServer {
                     type: CommEnum.PLAY_PHASE_CONFIRM
                   }));
                 } else {
-                  server.sockets[socket].send(JSON.stringify({
-                    type: CommEnum.SEND_INTERRUPTS,
-                    interrupts: server.players[socket].getInterrupts()
-                  }));
+                  server.updateInterrupts(socket);
                 }
               }
             } else if (server.activeTurn === id2) {
