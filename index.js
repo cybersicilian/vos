@@ -288,7 +288,15 @@ class Card {
     return this.abilities;
   }
   getName() {
-    return this.name;
+    let powStr = "";
+    if (this.pow() !== 1) {
+      if (this.pow() > 1) {
+        powStr = ` +${this.pow() - 1}`;
+      } else if (this.pow() < 1) {
+        powStr = ` ${this.pow() - 1}`;
+      }
+    }
+    return this.name + powStr;
   }
   setName(name) {
     this.name = name;
