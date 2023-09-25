@@ -287,7 +287,7 @@ class Card {
   getAbilities() {
     return this.abilities;
   }
-  getName() {
+  getDisplayName() {
     let powStr = "";
     if (this.pow() !== 1) {
       if (this.pow() > 1) {
@@ -296,7 +296,10 @@ class Card {
         powStr = ` ${this.pow() - 1}`;
       }
     }
-    return this.name + powStr;
+    return this.getName() + powStr;
+  }
+  getName() {
+    return this.name;
   }
   setName(name) {
     this.name = name;
@@ -2551,7 +2554,7 @@ class Player {
   }
   getCards(opps, deck) {
     return this.cards.map((x) => ({
-      name: x.getName(),
+      name: x.getDisplayName(),
       text: x.getFormulatedText({
         owner: this,
         opps,
