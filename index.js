@@ -851,8 +851,8 @@ class AbilitySymDraw extends BaseAbility {
   }
 }
 
-// logic/abilities/AbilityDiscardOppCard.ts
-class AbilityDiscardOppCard extends BaseAbility {
+// logic/abilities/AbilityDiscardOppCardRandom.ts
+class AbilityDiscardOppCardRandom extends BaseAbility {
   constructor(qty) {
     super(`Opponent discards {formula} cards at random`, [
       { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_MOST_CARDS }
@@ -2013,7 +2013,7 @@ var DeckList2 = {
     ]).setRarity(Rarity.COMMON),
     new Card(`Corporate Sabotage`, [
       new CostAbility("tadbucks", 20),
-      new AbilityDiscardOppCard(3)
+      new AbilityDiscardOppCardRandom(3)
     ]).setRarity(Rarity.RARE),
     new Card(`Inflationary Hedging`, [
       new CostAbility("tadbucks", 35),
@@ -2245,7 +2245,7 @@ var DeckList2 = {
       })
     ]).setRarity(Rarity.RARE),
     new Card(`Tactical Cuckage`, [
-      new AbilityDiscardOppCard(2),
+      new AbilityDiscardOppCardRandom(2),
       new AbilityDiscardSelfCard(3),
       new BaseAbility(`Make an opponent skip a turn`, [
         { pointer: Pointer.OPPONENT_MOST_CARDS, choice: Choices.OPPONENT }
@@ -2263,7 +2263,7 @@ var DeckList2 = {
       new AbilitySymDraw(1)
     ]).setRarity(Rarity.COMMON),
     new Card(`Minor Cucking`, [
-      new AbilityDiscardOppCard(1)
+      new AbilityDiscardOppCardRandom(1)
     ]).setRarity(Rarity.COMMON),
     new Card(`Gifted Sabotage`, [
       new AbilityDiscardSelfCard(2)
@@ -2390,6 +2390,12 @@ var DeckList2 = {
 };
 var DeckList_default = DeckList2;
 
+// logic/structure/utils/TurnInterrupt.ts
+var TurnInterrupt;
+(function(TurnInterrupt2) {
+  TurnInterrupt2[TurnInterrupt2["DISCARD_FROM_HAND"] = 0] = "DISCARD_FROM_HAND";
+})(TurnInterrupt || (TurnInterrupt = {}));
+
 // logic/gameplay/player/Player.ts
 class Player {
   name;
@@ -2405,6 +2411,7 @@ class Player {
   bot = false;
   host = false;
   botProfile = undefined;
+  resolveBeforeTurn = [];
   eventList = {};
   constructor(cards, deck) {
     this.name = Math.random().toString(36).substring(7);
@@ -2705,7 +2712,8 @@ class Player {
       winReason: this.winReason,
       host: this.host,
       you: false,
-      order: this.turnPlacement
+      order: this.turnPlacement,
+      interrupts: this.resolveBeforeTurn
     };
   }
   getLogText() {
@@ -2796,12 +2804,26 @@ class Player {
     }
   }
   discardChoose(cardArgs) {
-    let card = this.weightedDiscard(cardArgs);
-    if (card) {
-      this.discard(card, cardArgs.deck);
+    if (this.isBot()) {
+      let card = this.weightedDiscard(cardArgs);
+      if (card) {
+        this.discard(card, cardArgs.deck);
+      } else {
+        this.discardRandom(cardArgs);
+      }
     } else {
-      this.discardRandom(cardArgs);
+      this.resolveBeforeTurn.push(TurnInterrupt.DISCARD_FROM_HAND);
     }
+  }
+  hasInterrupts() {
+    return this.resolveBeforeTurn.length > 0;
+  }
+  getInterrupts() {
+    return this.resolveBeforeTurn;
+  }
+  clearInterrupts() {
+    this.resolveBeforeTurn = [];
+    return this;
   }
   randomCard() {
     return this.cards[Math.floor(Math.random() * this.cards.length)];
@@ -3038,6 +3060,21 @@ class GameServer {
     return id;
   }
   incrementPhase() {
+    let increment = true;
+    for (let id of Object.keys(this.players)) {
+      if (this.players[id].hasInterrupts() && !this.players[id].isBot()) {
+        this.sockets[id].send(JSON.stringify({
+          type: CommEnum.SEND_INTERRUPTS,
+          interrupts: this.players[id].getInterrupts()
+        }));
+        console.log(`Waiting on ${this.players[id].getName()} to resolve interrupts...`);
+        increment = false;
+      }
+    }
+    if (!increment) {
+      this.updateAllStates();
+      return false;
+    }
     let cardArgs = {
       owner: this.getActive(),
       opps: Object.values(this.players).filter((x) => x !== this.getActive()),
@@ -3506,6 +3543,28 @@ class GameServer {
                 message: "You haven't unlocked the upgrade shop."
               }));
             }
+            break;
+          case CommEnum.RESOLVE_INTERRUPT:
+            let playerInterrupts = server.players[id2].getInterrupts();
+            let targets = result.interrupts;
+            if (targets.length !== playerInterrupts.length) {
+              ws.send(JSON.stringify({
+                type: CommEnum.ERROR,
+                message: "You can't resolve these interrupts - invalid number of interrupts."
+              }));
+            } else {
+              for (let i = 0;i < targets.length; i++) {
+                switch (playerInterrupts[i]) {
+                  case TurnInterrupt.DISCARD_FROM_HAND:
+                    if (server.players[id2].cih().length > 0) {
+                      server.players[id2].discard(server.players[id2].cih()[targets[i]], server.deck);
+                    }
+                    break;
+                }
+              }
+              server.players[id2].clearInterrupts();
+            }
+            server.incrementPhase();
             break;
           case CommEnum.BUY_UPGRADE:
             let upgradeIndex = result.upgrade;
