@@ -1378,6 +1378,31 @@ class AbilityAntivaxxer extends BaseAbility {
   }
 }
 
+// logic/abilities/AbilityDiscardOppCard.ts
+class AbilityDiscardOppCard extends BaseAbility {
+  constructor(qty) {
+    super(`Opponent discards {formula} cards`, [
+      { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_MOST_CARDS }
+    ], (abilityArgs, madeChoices) => {
+      let opponent = madeChoices[0];
+      if (opponent.cih().length <= abilityArgs.card.pow()) {
+        opponent.discardHand(abilityArgs);
+      }
+      for (let i = 0;i < abilityArgs.card.pow() + qty; i++) {
+        if (opponent.inHand() === 0) {
+          break;
+        }
+        opponent.discardChoose(abilityArgs);
+      }
+    });
+    this.sai({
+      affectsOpponents: (cardArgs) => cardArgs.card.pow() + qty / cardArgs.opps.length,
+      discardsOpponentCards: (cardArgs) => cardArgs.card.pow() + qty
+    });
+    this.setFormula(`{pow} + ${qty}`);
+  }
+}
+
 // logic/gameplay/deck/DeckList.ts
 var DeckList2 = {
   radioactivity_deck: [
@@ -2263,7 +2288,7 @@ var DeckList2 = {
       new AbilitySymDraw(1)
     ]).setRarity(Rarity.COMMON),
     new Card(`Minor Cucking`, [
-      new AbilityDiscardOppCardRandom(1)
+      new AbilityDiscardOppCard(1)
     ]).setRarity(Rarity.COMMON),
     new Card(`Gifted Sabotage`, [
       new AbilityDiscardSelfCard(2)
@@ -2556,7 +2581,8 @@ class Player {
       winReason: this.winReason,
       host: this.host,
       you,
-      order: this.turnPlacement
+      order: this.turnPlacement,
+      interrupts: this.resolveBeforeTurn
     };
   }
   getCards(opps, deck) {
@@ -2801,6 +2827,11 @@ class Player {
     let card = this.cih()[Math.floor(Math.random() * this.cih().length)];
     if (card) {
       this.discard(card, cardArgs.deck);
+    }
+  }
+  discardHand(cardArgs) {
+    while (this.cih().length > 0) {
+      this.discardRandom(cardArgs);
     }
   }
   discardChoose(cardArgs) {
@@ -3067,7 +3098,6 @@ class GameServer {
           type: CommEnum.SEND_INTERRUPTS,
           interrupts: this.players[id].getInterrupts()
         }));
-        console.log(`Waiting on ${this.players[id].getName()} to resolve interrupts...`);
         increment = false;
       }
     }
@@ -3553,15 +3583,19 @@ class GameServer {
                 message: "You can't resolve these interrupts - invalid number of interrupts."
               }));
             } else {
+              let cardsToDiscard = [];
               for (let i = 0;i < targets.length; i++) {
                 switch (playerInterrupts[i]) {
                   case TurnInterrupt.DISCARD_FROM_HAND:
                     if (server.players[id2].cih().length > 0) {
-                      server.players[id2].discard(server.players[id2].cih()[targets[i]], server.deck);
+                      cardsToDiscard.push(server.players[id2].cih()[targets[i]]);
                     }
                     break;
                 }
               }
+              cardsToDiscard.forEach((card2) => {
+                server.players[id2].discard(card2, server.deck);
+              });
               server.players[id2].clearInterrupts();
             }
             server.incrementPhase();
