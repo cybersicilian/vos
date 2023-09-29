@@ -11,77 +11,6 @@ var Zone;
   Zone2[Zone2["NONE"] = 6] = "NONE";
 })(Zone || (Zone = {}));
 
-// logic/gameplay/deck/Deck.ts
-class Deck extends Array {
-  constructor() {
-    super(...arguments);
-  }
-  discardPile = [];
-  props = {};
-  set(card) {
-    this.splice(0, this.length, ...card);
-    return this;
-  }
-  asArray() {
-    return this;
-  }
-  addCard(card, amt = 1) {
-    for (let i = 0;i < amt; i++) {
-      this.push(card.clone().setZone(Zone.DECK));
-    }
-    return this;
-  }
-  addCards(cards) {
-    this.push(...cards.map((card) => card.clone().setZone(Zone.DECK)));
-    return this;
-  }
-  shuffle() {
-    for (let i = this.length - 1;i > 0; i--) {
-      const j = Math.floor(Math.random() * i);
-      const temp = this[i];
-      this[i] = this[j];
-      this[j] = temp;
-    }
-  }
-  reshuffle() {
-    this.push(...this.discardPile.map((card) => card.setZone(Zone.DECK)));
-    this.discardPile = [];
-    this.shuffle();
-  }
-  draw(qty = 1) {
-    let cards = [];
-    for (let i = 0;i < qty; i++) {
-      if (this.length === 0) {
-        this.reshuffle();
-      }
-      cards.push(this.pop().setZone(Zone.HAND));
-    }
-    return cards;
-  }
-  static fromCardList(size, cards) {
-    let rarityMap = {};
-    for (let card of cards) {
-      if (!rarityMap[card.getRarity()])
-        rarityMap[card.getRarity()] = 0;
-      rarityMap[card.getRarity()]++;
-    }
-    let rarityWeights = {};
-    let total = 0;
-    for (let rarity of Object.keys(rarityMap)) {
-      rarityWeights[rarity] = size * Math.pow(0.75, Object.keys(rarityMap).indexOf(rarity));
-      total += rarityWeights[rarity];
-    }
-    for (let rarity of Object.keys(rarityMap)) {
-      rarityWeights[rarity] = Math.round(rarityWeights[rarity] / total * size);
-    }
-    let deck = new Deck;
-    for (let card of cards) {
-      deck.addCard(card.clone(), rarityWeights[card.getRarity()]);
-    }
-    return deck;
-  }
-}
-
 // logic/structure/utils/CardEnums.ts
 var Choices;
 (function(Choices2) {
@@ -305,13 +234,33 @@ class Card {
     this.name = name;
     return this;
   }
+  toState(a) {
+    let props = { ...this.getProps() };
+    delete props.deck;
+    return {
+      name: this.getDisplayName(),
+      text: this.getFormulatedText(a),
+      rarity: this.getRarity(),
+      power: this.pow(),
+      formula: this.getFormulas(),
+      props,
+      playable: this.canBePlayed({
+        owner: a.owner,
+        opps: a.opps,
+        deck: a.deck,
+        card: this
+      })
+    };
+  }
   toCardState() {
+    let props = { ...this.getProps() };
+    delete props.deck;
     return {
       name: this.name,
       power: this.power,
       rarity: this.rarity,
       text: this.getText(),
-      props: this.props
+      props
     };
   }
   getLogText() {
@@ -345,6 +294,13 @@ class Card {
       return cards;
     }
   }
+  onSlottable(args) {
+    for (let ability of this.orderAbilities()) {
+      if (ability.getProp("slotted_ability")) {
+        ability.onSlot(args);
+      }
+    }
+  }
   orderAbilities() {
     return this.abilities.sort((a, b) => {
       if (a.constructor.name === "CostAbility" && b.constructor.name !== "CostAbility") {
@@ -367,6 +323,10 @@ class Card {
         return -1;
       } else if (!a.hasRestriction() && b.hasRestriction()) {
         return 1;
+      } else if (a.getProp("slotted_ability") && !b.getProp("slotted_ability")) {
+        return 1;
+      } else if (!a.getProp("slotted_ability") && b.getProp("slotted_ability")) {
+        return -1;
       }
       return 0;
     });
@@ -658,6 +618,9 @@ class BaseAbility {
     ability.setCanPlay(this.canPlay.getCallback());
     ability.setCanGive(this.canGive.getCallback());
     ability.sai(this.ai());
+    for (let prop of Object.keys(this.props)) {
+      ability.setProp(prop, this.props[prop]);
+    }
     return ability;
   }
   getChoices() {
@@ -729,7 +692,11 @@ class BaseAbility {
   }
   calcFormula(cardArgs) {
     let formula = this.textualizeFormula();
-    formula = formula.replace("{pow}", cardArgs.card.pow().toString());
+    try {
+      formula = formula.replace("{pow}", cardArgs.card.pow().toString());
+    } catch {
+      formula = formula.replace("{pow}", "1");
+    }
     return (0, eval)(formula);
   }
   makeChoices(args) {
@@ -821,58 +788,6 @@ class AbilityIncreasePower extends BaseAbility {
   }
 }
 
-// logic/abilities/AbilityDrawCard.ts
-class AbilityDrawCard extends BaseAbility {
-  constructor(qty) {
-    super(`Draw {formula} cards`, [], (abilityArgs, madeChoices) => {
-      abilityArgs.owner.draw(abilityArgs.deck, abilityArgs.card.pow() + qty);
-    });
-    this.sai({
-      drawsCards: (cardArgs) => cardArgs.card.pow() + qty
-    });
-    this.setFormula(`{pow} + ${qty}`);
-  }
-}
-
-// logic/abilities/AbilitySymDraw.ts
-class AbilitySymDraw extends BaseAbility {
-  constructor(qty) {
-    super(`Each player draws {formula} cards`, [], (abilityArgs, madeChoices) => {
-      abilityArgs.owner.draw(abilityArgs.deck, abilityArgs.card.pow() + qty);
-      for (let opp of abilityArgs.opps) {
-        opp.draw(abilityArgs.deck, abilityArgs.card.pow() + qty);
-      }
-    });
-    this.sai({
-      drawsCards: qty,
-      drawsOpponentCards: qty
-    });
-    this.setFormula(`{pow} + ${qty}`);
-  }
-}
-
-// logic/abilities/AbilityDiscardOppCardRandom.ts
-class AbilityDiscardOppCardRandom extends BaseAbility {
-  constructor(qty) {
-    super(`Opponent discards {formula} cards at random`, [
-      { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_MOST_CARDS }
-    ], (abilityArgs, madeChoices) => {
-      let opponent = madeChoices[0];
-      for (let i = 0;i < abilityArgs.card.pow() + qty; i++) {
-        if (opponent.inHand() === 0) {
-          break;
-        }
-        opponent.discardRandom(abilityArgs);
-      }
-    });
-    this.sai({
-      affectsOpponents: (cardArgs) => cardArgs.card.pow() + qty / cardArgs.opps.length,
-      discardsOpponentCards: (cardArgs) => cardArgs.card.pow() + qty
-    });
-    this.setFormula(`{pow} + ${qty}`);
-  }
-}
-
 // logic/abilities/AbilityDiscardSelfCard.ts
 class AbilityDiscardSelfCard extends BaseAbility {
   constructor(qty) {
@@ -886,44 +801,6 @@ class AbilityDiscardSelfCard extends BaseAbility {
       discardsCards: (cardArgs) => cardArgs.card.pow() + qty
     });
     this.setFormula(`${qty} - {pow}`);
-  }
-}
-
-// logic/abilities/AbilityDiscardHandDrawCards.ts
-class AbilityDiscardHandDrawCards extends BaseAbility {
-  qty;
-  constructor(qty) {
-    super(`Player discards hand, then draw {formula} cards`, [
-      {
-        choice: Choices.PLAYER,
-        pointer: (cardArgs) => {
-          if (cardArgs.owner.inHand() <= cardArgs.card.pow() + qty) {
-            return cardArgs.owner;
-          }
-          for (let opp of cardArgs.opps) {
-            if (opp.inHand() > cardArgs.card.pow() + qty) {
-              return opp;
-            }
-          }
-          return [cardArgs.owner, ...cardArgs.opps].sort((a, b) => a.inHand() - b.inHand())[0];
-        }
-      }
-    ], (abilityArgs, madeChoices) => {
-      let target = madeChoices.pop();
-      while (target.cih().length > 0) {
-        target.discardRandom(abilityArgs);
-      }
-      target.draw(abilityArgs.deck, qty + abilityArgs.card.pow());
-    });
-    this.sai({
-      discardsCards: 1,
-      drawsCards: qty,
-      discardsOpponentCards: 1,
-      drawsOpponentCards: qty,
-      affectsSelf: 1,
-      affectsOpponents: 1
-    });
-    this.setFormula(`{pow} + ${qty}`);
   }
 }
 
@@ -1012,31 +889,12 @@ class AbilityAddResource extends BaseAbility {
   }
 }
 
-// logic/abilities/core/CostAbility.ts
-class CostAbility extends BaseAbility {
-  constructor(resource, amt) {
-    super(`Pay {formula} ${resource}`, [], (abilityArgs, madeChoices) => {
-      abilityArgs.owner.setProp("res_" + resource, abilityArgs.owner.getProp("res_" + resource) - Math.max(amt, 0), abilityArgs);
-    });
-    this.setProp("cost_ability", true);
-    this.setCanPlay((cardArgs) => {
-      if (!cardArgs.owner)
-        return false;
-      return cardArgs.owner.getProp("res_" + resource) >= amt;
-    });
-    this.setFormula(`${amt} - {pow}`);
-    this.sai({
-      spendResource: (c) => this.calcFormula(c)
-    });
-  }
-}
-
 // logic/abilities/AbilityAddDeck.ts
 class AbilityAddDeck extends BaseAbility {
   constructor(deck_name, size = 75, unique = true, kill = false) {
     super(`Add the ${deck_name.replace("_", " ").replace(" deck", "")} deck to the game${unique ? " if it hasn't been already." : ""}`, [], (abilityArgs) => {
       if (DeckList_default[deck_name] && (!unique || !abilityArgs.deck.props[`added_${deck_name}`])) {
-        abilityArgs.deck.addCards(Deck.fromCardList(size, DeckList_default[deck_name]));
+        abilityArgs.deck.addCards(Deck2.fromCardList(size, deck_name));
         abilityArgs.deck.shuffle();
       }
     });
@@ -1056,171 +914,13 @@ class AbilityAddDeck extends BaseAbility {
 // logic/abilities/AbilityZombieRestriction.ts
 class AbilityZombieRestriction extends BaseAbility {
   constructor() {
-    super(`Play only if you have 0 or less res_life`, [], (abilityArgs) => {
+    super(`Play only if you have 0 or less life`, [], (abilityArgs) => {
     });
     this.setCanPlay((abilityArgs) => {
       return abilityArgs.owner.getProp("res_life") && abilityArgs.owner.getProp("res_life") <= 0;
     });
     this.sai({}, {
       pbp: ["res_life"]
-    });
-  }
-}
-
-// logic/abilities/core/OnDrawAbility.ts
-class OnDrawAbility extends BaseAbility {
-  constructor(ability) {
-    super(`When this card is drawn, ${ability.getText()[0].toLowerCase() + ability.getText().substring(1)}`, ability.getChoices(), ability.getCallback);
-    this.addEvent("draw", (cardArgs) => {
-      this.exec(cardArgs);
-    });
-    this.removeEvent("play");
-  }
-}
-
-// logic/abilities/AbilityAddEventToSelf.ts
-class AbilityAddEventToSelf extends BaseAbility {
-  constructor(events, callback) {
-    super(`(event stuff)`, [], (abilityArgs, madeChoices) => {
-      for (let event of events) {
-        abilityArgs.owner.addEvent(event, callback);
-      }
-    });
-    this.sai({
-      affectsSelf: events.length,
-      addEvents: events.length
-    });
-  }
-}
-
-// logic/abilities/AbilityWin.ts
-class AbilityWin extends BaseAbility {
-  constructor(reason) {
-    super(`You win.`, [], (abilityArgs, madeChoices) => {
-      abilityArgs.owner.setCanWin(true, reason);
-    });
-    this.sai({
-      winProgress: 100
-    });
-  }
-}
-
-// logic/abilities/AbilitySetPropSelf.ts
-class AbilitySetPropSelf extends BaseAbility {
-  constructor(prop, val) {
-    super(`(prop set)`, [], (abilityArgs, madeChoices) => {
-      abilityArgs.owner.setProp(prop, val, abilityArgs);
-    });
-    this.sai({
-      affectsSelf: 1
-    });
-  }
-}
-
-// logic/abilities/AbilityRecoverCards.ts
-class AbilityRecoverCards extends BaseAbility {
-  constructor(qty) {
-    super(`Recover {formula} cards`, (abilityArgs) => {
-      return new Array(qty).fill({ choice: Choices.CARD_IN_DISCARD, pointer: Pointer.CARD_IN_DISCARD_MOST_POWER, distinct: true });
-    }, (abilityArgs, madeChoices) => {
-      while (madeChoices.length > 0) {
-        if (abilityArgs.deck.discardPile.length == 0) {
-          break;
-        }
-        let choice = madeChoices.pop();
-        choice.move(Zone.HAND, abilityArgs);
-      }
-    });
-    this.setCanPlay((abilityArgs) => {
-      if (!abilityArgs.deck) {
-        return false;
-      }
-      return abilityArgs.deck.discardPile.length >= qty;
-    });
-    this.sai({
-      drawsCards: qty
-    });
-    this.setFormula(`${qty}`);
-  }
-}
-
-// logic/abilities/AbilityShuffleDiscardIntoDeck.ts
-class AbilityShuffleDiscardIntoDeck extends BaseAbility {
-  constructor() {
-    super("Shuffle the discard pile into the deck", [], (abilityArgs, madeChoices) => {
-      abilityArgs.deck.reshuffle();
-    });
-  }
-}
-
-// logic/abilities/core/PlayerRestrictionAbility.ts
-class PlayerRestrictionAbility extends BaseAbility {
-  constructor(requiredProp) {
-    super(`Play only if you have ${requiredProp}`, [], (abilityArgs) => {
-    });
-    this.setCanPlay((abilityArgs) => {
-      return abilityArgs.owner.getProp(requiredProp);
-    });
-    this.sai({}, {
-      pgp: [requiredProp]
-    });
-  }
-}
-
-// logic/abilities/core/PlayerRestrictionAbilityNeg.ts
-class PlayerRestrictionAbilityNeg extends BaseAbility {
-  constructor(requiredProp) {
-    super(`Play only if you don't have ${requiredProp}`, [], (abilityArgs) => {
-    });
-    this.sai({}, {
-      pbp: [requiredProp]
-    });
-    this.setCanPlay((abilityArgs) => {
-      return !abilityArgs.owner.getProp(requiredProp);
-    });
-  }
-}
-
-// logic/abilities/AbilityAddEventToAll.ts
-class AbilityAddEventToAll extends BaseAbility {
-  constructor(events, callback) {
-    super(`(event stuff)`, [], (abilityArgs, madeChoices) => {
-      for (let player of [abilityArgs.owner, ...abilityArgs.opps]) {
-        for (let event of events) {
-          player.addEvent(event, callback);
-        }
-      }
-    });
-    this.sai({
-      addEvents: events.length,
-      affectsSelf: events.length,
-      affectsOpponents: (c) => c.opps.length * events.length
-    });
-  }
-}
-
-// logic/abilities/AbilitySetPropAll.ts
-class AbilitySetPropAll extends BaseAbility {
-  constructor(prop, val) {
-    super(`(prop set)`, [], (abilityArgs, madeChoices) => {
-      [abilityArgs.owner, ...abilityArgs.opps].forEach((player) => player.setProp(prop, val, abilityArgs));
-    });
-    this.sai({
-      affectsSelf: 1,
-      affectsOpponents: 1
-    }, {
-      pbp: [prop]
-    });
-  }
-}
-
-// logic/abilities/core/PlayerPredicateRestrictionAbility.ts
-class PlayerPredicateRestrictionAbility extends BaseAbility {
-  constructor(text, predicate) {
-    super(`${text}`, [], (abilityArgs) => {
-    });
-    this.setCanPlay((abilityArgs) => {
-      return predicate(abilityArgs);
     });
   }
 }
@@ -1236,605 +936,66 @@ class TextAbility extends BaseAbility {
   }
 }
 
-// logic/abilities/AbilityUnlockUpgrade.ts
-class AbilityUnlockUpgrade extends BaseAbility {
-  constructor(upgrade, restrict = true) {
-    super(`Unlock ${upgrade.getName()} for purchase${restrict ? `. Play only if you haven't unlocked it yet.` : `.`}`, [], (abilityArgs) => {
-      if (abilityArgs.owner.upgrades().filter((check) => check.getName() === upgrade.getName()).length == 0) {
-        abilityArgs.owner.addUpgrade(upgrade);
-      }
+// logic/abilities/core/SlottedAbility.ts
+class SlottedAbility extends BaseAbility {
+  callbacks = {};
+  constructor(text, slotted) {
+    super(text, [], () => {
     });
-    if (restrict) {
-      this.setCanPlay((abilityArgs) => {
-        return abilityArgs.owner.upgrades().filter((check) => check.getName() === upgrade.getName()).length == 0;
-      });
+    this.callbacks = slotted;
+    this.setProp("slotted_ability", true);
+  }
+  onSlot(args) {
+    args.owner.addSlottedAbility(this);
+    if (this.callbacks.onSlot) {
+      this.callbacks.onSlot(args);
     }
-    this.sai({
-      changesGame: 1,
-      affectsSelf: 1,
-      unlockUpgrades: (c) => {
-        return c.owner.upgrades().filter((check) => check.getName() === upgrade.getName()).length == 0 ? 1 : 0;
-      }
-    });
+  }
+  onUnslot(args) {
+    args.owner.removeSlottedAbility(this);
+    if (this.callbacks.onUnslot) {
+      this.callbacks.onUnslot(args);
+    }
+  }
+  playerEvents() {
+    return this.callbacks.playerEvents ?? {};
+  }
+  clone() {
+    let ability = new SlottedAbility(this.text, this.callbacks);
+    ability.setFormula(this.formula);
+    ability.setCanPlay(this.canPlay.getCallback());
+    ability.setCanGive(this.canGive.getCallback());
+    ability.sai(this.ai());
+    for (let prop of Object.keys(this.props)) {
+      ability.setProp(prop, this.props[prop]);
+    }
+    return ability;
   }
 }
 
-// logic/gameplay/player/systems/Upgrade.ts
-class Upgrade {
-  data;
-  effect;
-  infinite = false;
-  scale = 1.1;
-  level = 0;
-  constructor(data, effect, infinite = false, scale = 1.1) {
-    this.data = JSON.parse(JSON.stringify(data));
-    this.effect = effect;
-    this.infinite = infinite;
-    this.scale = scale;
-  }
-  lvl() {
-    return this.level;
-  }
-  getCost() {
-    return this.data.cost;
-  }
-  getData(cardArgs) {
-    return {
-      name: this.getName(),
-      description: this.getDescription(),
-      cost: this.getCost(),
-      locked: this.data.locked || !this.canPayCost(cardArgs)
-    };
-  }
-  getName() {
-    return `${this.data.name}${this.infinite && this.level > 0 ? ` Lvl. ${this.level}` : ``}`;
-  }
-  getDescription() {
-    let text = this.data.description;
-    text = text.replace(`{level}`, this.level + "");
-    let matches = text.match(/{[^}]*}/g);
-    if (matches) {
-      for (let match of matches) {
-        let code = match.substring(1, match.length - 1);
-        text = text.replace(match, (0, eval)(code));
-      }
-    }
-    return text;
-  }
-  canPayCost(cardArgs) {
-    let available_resources = cardArgs.owner.getResources();
-    for (let cost of this.data.cost) {
-      if (cost.resource == "turns")
-        continue;
-      if (!available_resources[cost.resource])
-        return false;
-      if (available_resources[cost.resource] < cost.amt) {
-        return false;
-      }
-    }
-    return true;
-  }
-  payCost(cardArgs) {
-    let available_resources = cardArgs.owner.getResources();
-    for (let cost of this.data.cost) {
-      if (cost.resource === "turns") {
-        cardArgs.owner.addTurns(cost.amt);
-        continue;
-      } else {
-        cardArgs.owner.setProp(`res_${cost.resource}`, available_resources[cost.resource] - cost.amt, cardArgs);
-      }
-    }
-  }
-  locked() {
-    return this.data.locked;
-  }
-  unlock(cardArgs) {
-    if (!this.data.locked) {
-      this.payCost(cardArgs);
-      this.effect(cardArgs, this);
-      this.level++;
-      if (!this.infinite) {
-        this.data.locked = true;
-      } else {
-        for (let cost of this.data.cost) {
-          cost.amt = Math.ceil(cost.amt * this.scale);
-        }
-      }
-    }
-  }
-}
-
-// logic/abilities/AbilityAddTurnsOpp.ts
-class AbilityAddTurnsOpp extends BaseAbility {
+// logic/abilities/AbilityAddTurns.ts
+class AbilityAddTurns extends BaseAbility {
   constructor(qty) {
-    super(`Add {formula} turns to opponent.`, [
-      { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_LEAST_TURNS_REMAINING }
-    ], (abilityArgs, madeChoices) => {
-      let opponent = madeChoices[0];
-      opponent.addTurns(qty + abilityArgs.card?.pow());
+    super(`Add {formula} turns..`, [], (abilityArgs, madeChoices) => {
+      abilityArgs.owner.addTurns(Math.max(0, qty - abilityArgs.card?.pow()));
     });
-    this.setFormula(`{pow} + ${qty}`);
+    this.setFormula(`${qty} - {pow}`);
     this.sai({
-      oppWinSetback: qty,
-      affectsOpponents: (c) => qty / c.opps.length,
-      winProgress: (c) => qty / c.opps.length / 2
+      winProgress: (c) => Math.max(qty - c.card.pow(), 0),
+      affectsSelf: (c) => Math.max(qty - c.card.pow(), 0)
     });
   }
 }
 
-// logic/abilities/AbilityAntivaxxer.ts
-class AbilityAntivaxxer extends BaseAbility {
-  constructor() {
-    super(`You become innoculated with propaganda. You're an antivaxxer now.`, [], (a, m) => {
-      a.owner.setProp("antivaxxer", true);
-    });
-    this.sai({
-      meme: 100,
-      changesGame: 1,
-      affectsSelf: (c) => c.owner.getProp("antivaxxer") ? 0 : -10
-    }, {
-      pbp: ["antivaxxer", "zombie", "res_life"]
-    });
-  }
-}
-
-// logic/abilities/AbilityDiscardOppCard.ts
-class AbilityDiscardOppCard extends BaseAbility {
-  constructor(qty) {
-    super(`Opponent discards {formula} cards`, [
-      { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_MOST_CARDS }
-    ], (abilityArgs, madeChoices) => {
-      let opponent = madeChoices[0];
-      if (opponent.cih().length <= abilityArgs.card.pow()) {
-        opponent.discardHand(abilityArgs);
-      }
-      for (let i = 0;i < abilityArgs.card.pow() + qty; i++) {
-        if (opponent.inHand() === 0) {
-          break;
-        }
-        opponent.discardChoose(abilityArgs);
-      }
-    });
-    this.sai({
-      affectsOpponents: (cardArgs) => cardArgs.card.pow() + qty / cardArgs.opps.length,
-      discardsOpponentCards: (cardArgs) => cardArgs.card.pow() + qty
-    });
-    this.setFormula(`{pow} + ${qty}`);
-  }
-}
+// logic/structure/utils/PropEnums.ts
+var PropEnums;
+(function(PropEnums2) {
+  PropEnums2["UPGRADE_SHOP"] = "meta_upgrade";
+  PropEnums2["RELIGION"] = "meta_slottable_religion";
+})(PropEnums || (PropEnums = {}));
 
 // logic/gameplay/deck/DeckList.ts
 var DeckList2 = {
-  radioactivity_deck: [
-    new Card(`Nuclear Observation`, [
-      new AbilityAddEventToSelf(["draw"], (abilityArgs) => {
-        if (abilityArgs.card.getProp("radioactive")) {
-          abilityArgs.owner.setProp("knowledge", (abilityArgs.owner.getProp("knowledge") ?? 0) + 5, abilityArgs);
-          abilityArgs.owner.draw(abilityArgs.deck, 1);
-        }
-      }).setText("When you draw a radioactive card, gain {formula} knowledge and draw another card.").setFormula("{pow} + 5").sai({
-        drawsCards: 1,
-        affectsSelf: 1,
-        collectResource: 1
-      })
-    ]).setRarity(Rarity.LEGENDARY),
-    new Card(`Decay`, [
-      new OnDrawAbility(new AbilityDiscardSelfCard(1)),
-      new AbilityDiscardSelfCard(1)
-    ]).setRarity(Rarity.BASIC).setProp("radioactive", true),
-    new Card(`Fusion`, [
-      new OnDrawAbility(new BaseAbility(`If you have other cards in your hand, combine {formula} of them at random`, [], (abilityArgs, madeChoices) => {
-        let cards = abilityArgs.owner.cih();
-        if (cards.length > 2) {
-          let card1 = cards.splice(Math.floor(Math.random() * cards.length), 1)[0];
-          let card2 = cards.splice(Math.floor(Math.random() * cards.length), 1)[0];
-          let newCard = Card.combine(card1, card2);
-          newCard.move(Zone.HAND, abilityArgs);
-        }
-      })),
-      new AbilityDiscardSelfCard(1)
-    ]).setRarity(Rarity.UNCOMMON).setProp("radioactive", true),
-    new Card(`Fission`, [
-      new OnDrawAbility(new AbilityAddEventToSelf(["temp_draw"], (abilityArgs) => {
-        let card = abilityArgs.card;
-        let new_cards = card.explode(abilityArgs).sort((a, b) => Math.random() - 0.5);
-        new_cards.forEach((c, i) => {
-          if (i == 0) {
-            c.move(Zone.HAND, abilityArgs);
-          } else {
-            c.move(Zone.DISCARD, abilityArgs);
-          }
-        });
-      }).setText("The next card you draw explodes. Keep one fragment at random, and discard the rest.")),
-      new AbilityDiscardSelfCard(1)
-    ]).setRarity(Rarity.RARE).setProp("radioactive", true)
-  ],
-  genetics_deck: [
-    new Card(`Gene Bank`, [
-      new CostAbility("metal", 20),
-      new PlayerRestrictionAbility("genetics"),
-      new PlayerRestrictionAbilityNeg("gene_bank"),
-      new AbilitySetPropSelf("gene_bank", true).sai({
-        unlockUpgrades: 1,
-        winProgress: 1,
-        changesGame: 1
-      })
-    ]).setRarity(Rarity.RARE).setProp("construction", true),
-    new Card(`Analyze Card DNA`, [
-      new PlayerRestrictionAbility("genetics"),
-      new PlayerRestrictionAbility("gene_bank"),
-      new AbilityAddResource(5, "knowledge"),
-      new BaseAbility(`Analyze a card in the discard pile to add its DNA to the gene bank.`, [
-        { choice: Choices.CARD_IN_DISCARD, pointer: Pointer.CARD_IN_DISCARD_RANDOM }
-      ], (abilityArgs, madeChoices) => {
-        if (!abilityArgs.owner.getProp("dna_research")) {
-          abilityArgs.owner.setProp("dna_research", [], abilityArgs);
-        }
-        let card = madeChoices[0];
-        for (let ability of card.getAbilities()) {
-          abilityArgs.owner.getProp("dna_research").push(ability);
-        }
-        abilityArgs.deck.discardPile = abilityArgs.deck.discardPile.filter((c) => c !== card);
-      }).sai({
-        affectsSelf: 1,
-        unlockUpgrades: 1,
-        changesGame: 1
-      })
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Spank Bank Variety`, [
-      new PlayerPredicateRestrictionAbility(`if you have {formula} or more entries in your gene bank`, (abilityArgs) => {
-        return (abilityArgs.owner.getProp("dna_research") ?? []).length >= 30 - abilityArgs.card.pow();
-      }).setFormula(`30 - {pow}`),
-      new BaseAbility(`If you have {formula} or more entries in your gene bank, you win the game on your next turn.`, [], (abilityArgs, madeChoices) => {
-        abilityArgs.owner.setCanWin(true, "Genetic Superiority");
-      }).setFormula(`30 - {pow}`)
-    ]).setRarity(Rarity.LEGENDARY)
-  ],
-  explosives_deck: [
-    new Card(`Grenade`, [
-      new PlayerRestrictionAbility("explosives"),
-      new BaseAbility("Explode a card at random in an opponents hand, then they discard half that many cards at random.", [
-        { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_LEAST_CARDS }
-      ], (abilityArgs, madeChoices) => {
-        let opponent = madeChoices[0];
-        let card = opponent.cih()[Math.floor(Math.random() * opponent.cih().length)];
-        if (card) {
-          opponent.setCiH(opponent.cih().filter((c) => c !== card));
-          let new_cards = card.explode({
-            owner: opponent,
-            opps: [...abilityArgs.opps, abilityArgs.owner].filter((p) => p !== opponent),
-            deck: abilityArgs.deck,
-            card
-          });
-          let toDiscard = Math.ceil(new_cards.length / 2);
-          new_cards.forEach((c, i) => {
-            c.move(Zone.HAND, abilityArgs, {
-              to: opponent
-            });
-          });
-          for (let i = 0;i < toDiscard; i++) {
-            opponent.discardChoose(abilityArgs);
-          }
-        }
-      }).sai({
-        affectsOpponents: 2,
-        oppWinSetback: 1,
-        changesGame: 1
-      })
-    ]),
-    new Card(`Dynamite`, [
-      new PlayerRestrictionAbility("explosives"),
-      new BaseAbility(`Explode all cards in the discard pile`, [], (abilityArgs, madeChoices) => {
-        let cards = abilityArgs.deck.discardPile;
-        abilityArgs.deck.discardPile = [];
-        for (let card of cards) {
-          let new_cards = card.explode(abilityArgs);
-          new_cards.forEach((c, i) => {
-            c.move(Zone.DISCARD, abilityArgs);
-          });
-        }
-      }).sai({
-        changesGame: 1,
-        addCardsToDeck: 1
-      }),
-      new BaseAbility(`Destroy half the cards in the discard pile at random`, [], (abilityArgs, madeChoices) => {
-        let cards = abilityArgs.deck.discardPile;
-        abilityArgs.deck.discardPile = [];
-        let toDiscard = Math.ceil(cards.length / 2);
-        for (let i = 0;i < toDiscard; i++) {
-          abilityArgs.deck.discardPile.push(cards.splice(Math.floor(Math.random() * cards.length), 1)[0]);
-        }
-      }).sai({
-        changesGame: 1
-      }),
-      new AbilityRecoverCards(1)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Nuclear Bomb`, [
-      new PlayerRestrictionAbility("explosives"),
-      new BaseAbility(`Kill everyone. They discard their hands`, [], (abilityArgs, madeChoices) => {
-        let players = [...abilityArgs.opps, abilityArgs.owner];
-        for (let player of players) {
-          player.setProp("res_life", 0, abilityArgs);
-          abilityArgs.deck.discardPile.concat(player.cih());
-          player.setCiH([]);
-        }
-      }).sai({
-        oppWinSetback: 1,
-        discardsOpponentCards: 1,
-        discardsCards: 1
-      }),
-      new BaseAbility(`Kill everyone's citizens.`, [], (abilityArgs, madeChoices) => {
-        let players = [...abilityArgs.opps, abilityArgs.owner];
-        for (let player of players) {
-          player.setProp("population", 0, abilityArgs);
-        }
-      }).sai({
-        oppWinSetback: 1,
-        affectsOpponents: 1,
-        affectsSelf: 1
-      }),
-      new BaseAbility(`Explode all cards in the discard pile`, [], (abilityArgs, madeChoices) => {
-        let cards = abilityArgs.deck.discardPile;
-        abilityArgs.deck.discardPile = [];
-        for (let card of cards) {
-          let new_cards = card.explode(abilityArgs);
-          new_cards.forEach((c, i) => {
-            c.move(Zone.DISCARD, abilityArgs);
-          });
-        }
-      }).sai({
-        changesGame: 1,
-        addCardsToDeck: 1
-      }),
-      new AbilityShuffleDiscardIntoDeck,
-      new AbilityAddDeck("radioactivity_deck", 30, true)
-    ]).setRarity(Rarity.HAXOR)
-  ],
-  academia_deck: [
-    new Card(`The Scientific Process`, [
-      new CostAbility("knowledge", 5),
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: "Rapid Iteration",
-        description: "When you draw a card, if you have more cards than your maximum hand size, randomly combine cards.",
-        cost: [{
-          amt: 25,
-          resource: "knowledge"
-        }]
-      }, (cardArgs) => {
-        cardArgs.owner.addEvent("draw", (cardArgs2) => {
-          if (cardArgs2.owner.cih().length > cardArgs2.owner.getHandsize() && cardArgs2.owner.cih().length >= 2) {
-            while (cardArgs2.owner.cih().length > cardArgs2.owner.getHandsize() && cardArgs2.owner.cih().length >= 2) {
-              let randos = cardArgs2.owner.cih().sort(() => Math.random() - 0.5).slice(0, 2);
-              let newCard = Card.combine(...randos);
-              randos.forEach((c) => c.remove(cardArgs2));
-              newCard.setProp(`hybrid`, true);
-              newCard.move(Zone.HAND, cardArgs2);
-            }
-          }
-        });
-      }))
-    ]).setRarity(Rarity.RARE),
-    new Card(`Thought that Counts`, [
-      new AbilityAddResource(1, "knowledge")
-    ]).setRarity(Rarity.BASIC),
-    new Card(`Receive Public Education`, [
-      new AbilityAddResource(1, "knowledge"),
-      new AbilityDrawCard(1),
-      new AbilityDiscardSelfCard(1)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Homeschooling`, [
-      new AbilityAddResource(5, "knowledge"),
-      new AbilityAntivaxxer
-    ]).setRarity(Rarity.RARE),
-    new Card(`Go to University`, [
-      new CostAbility("tadbucks", 10),
-      new AbilityAddResource(5, "knowledge"),
-      new AbilityDrawCard(1)
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Pseudo-Education`, [
-      new AbilityAddResource(2, "knowledge"),
-      new AbilityAntivaxxer,
-      new AbilityAddDeck("alchemy_deck", 75, true).setText(`Invent alchemy and witchcraft. Add them to the game.`)
-    ]),
-    new Card(`Research: Explosives`, [
-      new CostAbility("knowledge", 15),
-      new AbilitySetPropSelf("explosives", true).setCanPlay((cardArgs) => {
-        return !cardArgs.owner.getProp("explosives");
-      }).setText("Discover explosives if you haven't already."),
-      new AbilityAddDeck("explosives_deck", 35, true).setText(`Invent explosives. Add them to the game.`)
-    ]).setProp("research", true),
-    new Card("Research: Genetics", [
-      new CostAbility("knowledge", 20),
-      new AbilitySetPropSelf("genetics", true).setCanPlay((cardArgs) => {
-        return !cardArgs.owner.getProp("genetics");
-      }).setText("Discover genetics if you haven't already."),
-      new AbilityAddDeck("genetics_deck", 35, true).setText(`Invent genetics. You learn cards are sentient. Add it to the game.`)
-    ])
-  ],
-  basic_resource_deck: [
-    new Card(`Wood Shipment`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: `Wood Shipment`,
-        description: `Order {Math.floor(10 * Math.pow(1.15, {level} + 1)} wood from the Amazon`,
-        cost: [{
-          amt: 20,
-          resource: "tadbucks"
-        }],
-        locked: false
-      }, (c, u) => {
-        c.owner.addResource("wood", Math.floor(10 * Math.pow(1.15, u.lvl())));
-      }, true, 1.25))
-    ]),
-    new Card(`Food Shipment`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: `Wood Shipment`,
-        description: `Order {Math.floor(10 * Math.pow(1.15, {level} + 1)} food from the Amazon`,
-        cost: [{
-          amt: 20,
-          resource: "tadbucks"
-        }],
-        locked: false
-      }, (c, u) => {
-        c.owner.addResource("food", Math.floor(10 * Math.pow(1.15, u.lvl())));
-      }, true, 1.25))
-    ]),
-    new Card(`Metal Shipment`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: `Wood Shipment`,
-        description: `Order {Math.floor(10 * Math.pow(1.15, {level} + 1)} metal from the Amazon`,
-        cost: [{
-          amt: 20,
-          resource: "tadbucks"
-        }],
-        locked: false
-      }, (c, u) => {
-        c.owner.addResource("metal", Math.floor(10 * Math.pow(1.15, u.lvl())));
-      }, true, 1.25))
-    ]),
-    new Card(`Stone Shipment`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: `Wood Shipment`,
-        description: `Order {Math.floor(10 * Math.pow(1.15, {level} + 1)} stone from the Amazon`,
-        cost: [{
-          amt: 20,
-          resource: "tadbucks"
-        }],
-        locked: false
-      }, (c, u) => {
-        c.owner.addResource("stone", Math.floor(10 * Math.pow(1.15, u.lvl())));
-      }, true, 1.25))
-    ]),
-    new Card(`Gather Wood`, [
-      new AbilityAddResource(0, "wood")
-    ]).setRarity(Rarity.BASIC).setProp("resource", true),
-    new Card(`Gather Stone`, [
-      new AbilityAddResource(0, "stone")
-    ]).setRarity(Rarity.BASIC).setProp("resource", true),
-    new Card(`Gather Metal`, [
-      new AbilityAddResource(0, "metal")
-    ]).setRarity(Rarity.BASIC).setProp("resource", true),
-    new Card(`Gather Food`, [
-      new AbilityAddResource(0, "food")
-    ]).setRarity(Rarity.BASIC).setProp("resource", true),
-    new Card(`Collect Taxes`, [
-      new BaseAbility(`Gain {formula} Tadbucks for each citizen you have.`, [], (abilityArgs, madeChoices) => {
-        abilityArgs.owner.setProp("tadbucks", (abilityArgs.owner.getProp("tadbucks") ?? 0) + abilityArgs.owner.getProp("population") * (abilityArgs.card.pow() * 10), abilityArgs);
-      }).setFormula("{pow} * 10")
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Construct Cottage`, [
-      new CostAbility("wood", 5),
-      new CostAbility("food", 5),
-      new BaseAbility(`Build a cottage. (Adds {formula} housing)`, [], (abilityArgs, madeChoices) => {
-        abilityArgs.owner.setProp("housing", abilityArgs.card.pow() + (abilityArgs.owner.getProp("housing") ?? 0), abilityArgs);
-      }),
-      new AbilityAddEventToSelf(["turn_start"], (abilityArgs) => {
-        if (abilityArgs.owner.getProp("housing") > abilityArgs.owner.getProp("population")) {
-          abilityArgs.owner.setProp("population", (abilityArgs.owner.getProp("population") ?? 0) + 1, abilityArgs);
-        }
-      }).setText("At the start of your turn, if you have housing, people move in.")
-    ]).setRarity(Rarity.COMMON).setProp("construction", true),
-    new Card(`Marketplace Construction`, [
-      new PlayerRestrictionAbilityNeg("marketplace"),
-      new CostAbility("wood", 5),
-      new CostAbility("stone", 5),
-      new AbilitySetPropSelf("marketplace", true).setText("Unlocks the marketplace"),
-      new BaseAbility(`Get a stimmy check of {formula} tadbucks`, [], (abilityArgs, madeChoices) => {
-        abilityArgs.owner.setProp("tadbucks", (abilityArgs.owner.getProp("tadbucks") ?? 0) + abilityArgs.card.pow() * 10, abilityArgs);
-      }).setFormula(`100 + (10 * {pow})`)
-    ]).setRarity(Rarity.MYTHIC).setProp("construction", true),
-    new Card(`Research: Improved Agricultural Practices`, [
-      new CostAbility("knowledge", 8),
-      new BaseAbility(`Increase the power of all cards that produce food by {formula}`, [], (abilityArgs, madeChoices) => {
-        let players = [...abilityArgs.opps, abilityArgs.owner];
-        for (let player of players) {
-          for (let card of player.cih()) {
-            if (card.getProp("produce") && card.getProp("produce").includes("food")) {
-              card.setPow(card.pow() + abilityArgs.card.pow());
-            }
-          }
-        }
-        for (let card of abilityArgs.deck.discardPile) {
-          if (card.getProp("produce") && card.getProp("produce").includes("food")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-        for (let card of abilityArgs.deck.asArray()) {
-          if (card.getProp("produce") && card.getProp("produce").includes("food")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-      })
-    ]).setRarity(Rarity.RARE).setProp("research", true),
-    new Card(`Research: Improved Logging Practices`, [
-      new CostAbility("knowledge", 8),
-      new BaseAbility(`Increase the power of all cards that produce wood by {formula}`, [], (abilityArgs, madeChoices) => {
-        let players = [...abilityArgs.opps, abilityArgs.owner];
-        for (let player of players) {
-          for (let card of player.cih()) {
-            if (card.getProp("produce") && card.getProp("produce").includes("wood")) {
-              card.setPow(card.pow() + abilityArgs.card.pow());
-            }
-          }
-        }
-        for (let card of abilityArgs.deck.discardPile) {
-          if (card.getProp("produce") && card.getProp("produce").includes("wood")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-        for (let card of abilityArgs.deck.asArray()) {
-          if (card.getProp("produce") && card.getProp("produce").includes("wood")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-      })
-    ]).setRarity(Rarity.RARE).setProp("research", true),
-    new Card(`Research: Improved Quarrying Practices`, [
-      new CostAbility("knowledge", 8),
-      new BaseAbility(`Increase the power of all cards that produce stone by {formula}`, [], (abilityArgs, madeChoices) => {
-        let players = [...abilityArgs.opps, abilityArgs.owner];
-        for (let player of players) {
-          for (let card of player.cih()) {
-            if (card.getProp("produce") && card.getProp("produce").includes("stone")) {
-              card.setPow(card.pow() + abilityArgs.card.pow());
-            }
-          }
-        }
-        for (let card of abilityArgs.deck.discardPile) {
-          if (card.getProp("produce") && card.getProp("produce").includes("stone")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-        for (let card of abilityArgs.deck.asArray()) {
-          if (card.getProp("produce") && card.getProp("produce").includes("stone")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-      })
-    ]).setRarity(Rarity.RARE).setProp("research", true),
-    new Card(`Research: Improved Mining Practices`, [
-      new CostAbility("knowledge", 8),
-      new BaseAbility(`Increase the power of all cards that produce metal by {formula}`, [], (abilityArgs, madeChoices) => {
-        let players = [...abilityArgs.opps, abilityArgs.owner];
-        for (let player of players) {
-          for (let card of player.cih()) {
-            if (card.getProp("produce") && card.getProp("produce").includes("metal")) {
-              card.setPow(card.pow() + abilityArgs.card.pow());
-            }
-          }
-        }
-        for (let card of abilityArgs.deck.discardPile) {
-          if (card.getProp("produce") && card.getProp("produce").includes("metal")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-        for (let card of abilityArgs.deck.asArray()) {
-          if (card.getProp("produce") && card.getProp("produce").includes("metal")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-      })
-    ]).setRarity(Rarity.RARE).setProp("research", true)
-  ],
   zombie_deck: [
     new Card(`Chomp`, [
       new AbilityZombieRestriction,
@@ -1900,526 +1061,306 @@ var DeckList2 = {
       })
     ])
   ],
-  alchemy_deck: [
-    new Card(`Harvest Snowthistle`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: "Forage Snowthistle",
-        description: "Forage snowthistle.",
-        cost: [{
-          amt: 1,
-          resource: "turns"
-        }],
-        locked: false
-      }, (c) => {
-        c.owner.addResource("snowroot", 1);
-      }, true, 1.1), false)
-    ]).setRarity(Rarity.BASIC)
-  ],
-  gambling_deck: [
-    new Card(`Lady Fortune's Favor`, [
-      new PlayerRestrictionAbility("dice"),
-      new CostAbility("tadbucks", 20),
-      new AbilityDiscardSelfCard(1),
-      new BaseAbility("Roll your dice. If you get a {formula} or more, you win the game.", [], (cardArgs, madeChoices) => {
-        let result = cardArgs.owner.rollDice();
-        if (result >= 100 - cardArgs.card.pow()) {
-          cardArgs.owner.setCanWin(true, "had Lady Fortune's favor");
-        }
-      }).setFormula(`100 - {pow}`)
-    ]).setRarity(Rarity.MYTHIC),
-    new Card(`Street Modding`, [
-      new PlayerRestrictionAbility("dice"),
-      new CostAbility("tadbucks", 15),
-      new BaseAbility("Add {formula} pips at random to your dice.", [], (cardArgs, madeChoices) => {
-        let pips = 3 + cardArgs.card.pow();
-        let dice = [...cardArgs.owner.getProp("dice") ?? [-1]];
-        for (let i = 0;i < pips; i++) {
-          dice[Math.floor(Math.random() * dice.length)]++;
-        }
-        cardArgs.owner.setProp("dice", dice, cardArgs);
-      }).setFormula(`3 + {pow}`)
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Government Grade Fortunator`, [
-      new PlayerRestrictionAbility("dice"),
-      new CostAbility("tadbucks", 100),
-      new BaseAbility("Add {formula} pips at random to your dice.", [], (cardArgs, madeChoices) => {
-        let pips = 10 + cardArgs.card.pow();
-        let dice = [...cardArgs.owner.getProp("dice") ?? [-1]];
-        for (let i = 0;i < pips; i++) {
-          dice[Math.floor(Math.random() * dice.length)]++;
-        }
-        cardArgs.owner.setProp("dice", dice, cardArgs);
-      }).setFormula(`10 + {pow}`)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Dimensionality Tear`, [
-      new PlayerRestrictionAbility("explosives"),
-      new PlayerRestrictionAbility("dice"),
-      new CostAbility("tadbucks", 20),
-      new CostAbility("knowledge", 10),
-      new BaseAbility("Add 2 sides to your dice, each with pips equal to the total of the rest of the sides of the dice.", [], (cardArgs, madeChoices) => {
-        let total = cardArgs.owner.getProp("dice").reduce((a, b) => a + b, 0);
-        cardArgs.owner.setProp("dice", cardArgs.owner.getProp("dice").concat([total, total]), cardArgs);
-      })
-    ]).setRarity(Rarity.MYTHIC),
-    new Card(`Gambling Insurance`, [
-      new PlayerRestrictionAbility("casino"),
-      new CostAbility("tadbucks", 50),
-      new AbilityAddEventToSelf(["gamble_lose"], (abilityArgs) => {
-        abilityArgs.owner.setProp("tadbucks", (abilityArgs.owner.getProp("tadbucks") ?? 0) + abilityArgs.card.pow() * 10, abilityArgs);
-      }).setText("Whenever you lose at gambling, you gain {formula} Tadbucks.").setFormula(`{pow} * 10`)
-    ]).setRarity(Rarity.LEGENDARY)
-  ],
-  currency_deck: [
-    new Card(`Telemarketing`, [
-      new CostAbility("tadbucks", 50),
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: "Telemarketing",
-        description: "Outsource cold-calling all your opponents, wasting their time.",
-        cost: [{
-          amt: 15,
-          resource: "tadbucks"
-        }]
-      }, (c) => {
-        c.opps.forEach((opponent) => {
-          opponent.addTurns(2);
-        });
-      }, true, 1.35)).setText("Unlocks telemarketing as a way to waste your opponents time.")
-    ]).setRarity(Rarity.RARE),
-    new Card(`Welfare Handouts`, [
-      new BaseAbility(`Cards in your hand lose all costs`, [], (abilityArgs, madeChoices) => {
-        let cards = abilityArgs.owner.cih();
-        for (let i = 0;i < cards.length; i++) {
-          cards[i] = new Card(cards[i].getName(), [
-            ...cards[i].getAbilities().map((ability) => {
-              return ability.clone();
-            }).filter((ability) => {
-              return !ability.isCostAbility();
-            })
-          ]).setPow(cards[i].pow()).setRarity(cards[i].getRarity()).setProps(cards[i].getProps());
-        }
-      })
-    ]).setRarity(Rarity.LEGENDARY),
-    new Card(`Moneybags \$\$\$`, [
-      new CostAbility(`tadbucks`, 2000),
-      new AbilityWin("achieving wealth")
-    ]).setRarity(Rarity.LEGENDARY),
-    new Card(`Communism`, [
-      new BaseAbility(`Collect all cards from all hands, shuffle them together, then distribute them evenly to all players`, [], (abilityArgs, madeChoices) => {
-        let allCards = [];
-        for (let player of [abilityArgs.owner, ...abilityArgs.opps]) {
-          while (player.inHand() > 0) {
-            allCards.push(player.cih().pop());
-          }
-        }
-        allCards = allCards.sort(() => Math.random() - 0.5);
-        let ctr = 0;
-        while (allCards.length > 0) {
-          [abilityArgs.owner, ...abilityArgs.opps][ctr % [abilityArgs.owner, ...abilityArgs.opps].length].cih().push(allCards.pop());
-          ctr++;
-        }
-      })
-    ]).setRarity(Rarity.MYTHIC),
-    new Card(`The House Always Wins`, [
-      new CostAbility("tadbucks", 25),
-      new PlayerRestrictionAbilityNeg("casino"),
-      new AbilitySetPropSelf("casino", true).setText("Unlocks membership to the casino."),
-      new AbilitySetPropSelf("dice", [1, 2, 3, 4, 5, 6]).setText("Unlocks a basic 6-sided dice"),
-      new AbilityAddDeck("gambling_deck", 50, true).setText(`Invent gambling. Add it to the game.`)
-    ]).setRarity(Rarity.MYTHIC),
-    new Card(`Payday`, [
-      new BaseAbility(`Get paid. Earn {formula} Tadbucks.`, [], (abilityArgs) => {
-        abilityArgs.owner.setProp("res_tadbucks", (abilityArgs.owner.getProp("res_tadbucks") ?? 0) + 15 * abilityArgs.card.pow(), abilityArgs);
-      }).setFormula(`15 * {pow}`)
-    ]).setRarity(Rarity.BASIC),
-    new Card(`Bonus Check`, [
-      new BaseAbility(`Get paid. Earn {formula} Tadbucks.`, [], (abilityArgs) => {
-        abilityArgs.owner.setProp("res_tadbucks", (abilityArgs.owner.getProp("res_tadbucks") ?? 0) + 25 * abilityArgs.card.pow(), abilityArgs);
-      }).setFormula(`25 * {pow}`)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Corporate Sabotage`, [
-      new CostAbility("tadbucks", 20),
-      new AbilityDiscardOppCardRandom(3)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Inflationary Hedging`, [
-      new CostAbility("tadbucks", 35),
-      new BaseAbility(`Increase the power of all cards in your hand and the deck that mention Tadbucks by {formula}`, [], (abilityArgs, madeChoices) => {
-        for (let card of abilityArgs.owner.cih()) {
-          if (!card) {
-            continue;
-          }
-          if (card === abilityArgs.card)
-            continue;
-          if (card.getText().toLowerCase().includes("tadbuck") || card.getName().toLowerCase().includes("tadbuck")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-        for (let card of abilityArgs.deck.asArray()) {
-          if (!card) {
-            continue;
-          }
-          if (card.getText().toLowerCase().includes("tadbuck") || card.getName().toLowerCase().includes("tadbuck")) {
-            card.setPow(card.pow() + abilityArgs.card.pow());
-          }
-        }
-      })
-    ]).setRarity(Rarity.RARE),
-    new Card(`Marketplace Economics`, [
-      new CostAbility("tadbucks", 50),
-      new AbilityAddDeck("basic_resource_deck", 75, false).setText(`Invent market economics. Add basic resources to the game.`)
-    ])
-  ],
-  life_deck: [
-    new Card(`Job Interview`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: "Get a Job",
-        description: "Search for a job in Alaska.",
-        cost: [{
-          amt: 3,
-          resource: "turns"
-        }],
-        locked: false
-      }, (cardArgs) => {
-        let p = cardArgs.owner;
-        p.addUpgrade(new Upgrade({
-          name: "Work",
-          description: "Work for 65 Tadbucks.",
-          cost: [{
-            amt: 1,
-            resource: "turns"
-          }]
-        }, (cardArgs2) => {
-          cardArgs2.owner.addResource("tadbucks", 65);
-        }, true, 1.5));
-      }))
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Phlebotomy`, [
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: "Blood Drawing",
-        description: "Take some time to do research on your blood. You get paid for it!",
-        cost: [{
-          amt: 1,
-          resource: "turns"
-        }, {
-          amt: 3,
-          resource: "life"
-        }]
-      }, (cardArgs) => {
-        cardArgs.owner.addResource("tadbucks", 5);
-        cardArgs.owner.addResource("knowledge", 5);
-      }, true, 1.2))
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Crusader Kings III Level of Immortality`, [
-      new CostAbility("life", 2500),
-      new AbilityWin("achieving immortality")
-    ]).setRarity(Rarity.MYTHIC),
-    new Card(`Going to the Gym`, [
-      new BaseAbility(`Gain {formula} life`, [], (abilityArgs, madeChoices) => {
-        abilityArgs.owner.setProp("res_life", abilityArgs.owner.getProp("res_life") + 5 * abilityArgs.card.pow(), abilityArgs);
-      }).setFormula(`5 * {pow}`)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Assassinate`, [
-      new BaseAbility(`Kill an opponent. They discard their hand.`, [
-        { pointer: Pointer.OPPONENT_MOST_CARDS, choice: Choices.OPPONENT }
-      ], (abilityArgs, madeChoices) => {
-        let opponent = madeChoices[0];
-        opponent.setProp("res_life", 0, abilityArgs);
-        while (opponent.inHand() > 0) {
-          opponent.discard(opponent.cih()[0], abilityArgs.deck);
-        }
-      })
-    ]).setRarity(Rarity.HAXOR),
-    new Card(`Soul Cancer`, [
-      new BaseAbility(`Whenever you play a card, lose {formula} life`, [], (abilityArgs, madeChoices) => {
-        abilityArgs.owner.addEvent("play", (abilityArgs2) => {
-          if (!abilityArgs2.owner.getProp("res_life")) {
-            abilityArgs2.owner.setProp("res_life", abilityArgs2.card.pow(), abilityArgs2);
-          }
-          abilityArgs2.owner.setProp("res_life", abilityArgs2.owner.getProp("res_life") - abilityArgs2.card.pow(), abilityArgs2);
-        });
-      })
-    ]).setRarity(Rarity.RARE),
-    new Card(`2024 Presidential Debate`, [
-      new AbilityAntivaxxer,
-      new AbilityDrawCard(1)
-    ]).setRarity(Rarity.UNCOMMON)
-  ],
-  point_deck: [
-    new Card("Point of Pity", [
-      new BaseAbility("If you have -{formula} or fewer points, you win the game on your next turn", [], (a, m) => {
-        if (a.owner.getProp("points") <= -(100 - a.card.pow())) {
-          a.owner.setCanWin(true, "had a point of pity");
-        }
-      }).setFormula(`100 - {pow}`)
-    ]).setRarity(Rarity.RARE),
-    new Card("Pointlessify", [
-      new BaseAbility("Reduce all point values in an opponents hand to -1. Gain points equal to the difference.", [
-        {
-          pointer: Pointer.OPPONENT_MOST_CARDS,
-          choice: Choices.OPPONENT
-        }
-      ], (abilityArgs, madeChoices) => {
-        let opponent = madeChoices[0];
-        let points = 0;
-        for (let card of opponent.cih()) {
-          if (card.getProp("point_value")) {
-            if (card.getProp("point_value") > -1)
-              points += card.getProp("point_value") + 1;
-            card.setProp("point_value", -1);
-          }
-        }
-        abilityArgs.owner.setProp("points", (abilityArgs.owner.getProp("points") ?? 0) + points, abilityArgs);
-      })
-    ]).setRarity(Rarity.RARE),
-    new Card("Pontificate", [
-      new BaseAbility("Gain {formula} points.", [], (a, m) => {
-        a.owner.setProp("points", a.owner.getProp("points") + a.card.pow(), a);
-      }),
-      new BaseAbility("Randomly add points to all cards in the deck", [], (a2, m) => {
-        for (let c of a2.deck) {
-          if (c.getProp("point_value")) {
-            c.setProp("point_value", c.getProp("point_value") + Math.floor(Math.random() * c.pow()));
-          } else {
-            c.setProp("point_value", [-c.pow(), 0, 0, 1, 1, c.pow()].sort((a, b) => Math.random() - 0.5)[0]);
-          }
-        }
-      })
-    ]).setRarity(Rarity.BASIC)
-  ],
   faith_deck: [
+    new Card(`Many-Armed One`, [
+      new AbilityAddDeck("faith_evangelical_deck", 75, true, true).setText("Play only if the evangelical deck hasn't been added yet. Add the evangelical deck to the game."),
+      new SlottedAbility("When you draw a card, gain 1 faith", {
+        playerEvents: {
+          draw: [(args) => {
+            args.owner.addResource("faith", 1);
+          }]
+        }
+      })
+    ]).setProp(PropEnums.RELIGION, [0]).setRarity(Rarity.BASIC),
     new Card(`Thoughts and Prayers`, [
+      new AbilityAddResource(0, "faith"),
+      new AbilityAddTurns(3).setText(`Meditate. Add {formula} turns.`)
+    ]).setRarity(Rarity.COMMON),
+    new Card(`Have You Heard the Good Message?`, [
       new AbilityAddResource(1, "faith"),
-      new AbilityDrawCard(1),
-      new BaseAbility("Slow your roll. You pray instead of getting closer to winning", [], (a, m) => a.owner.addTurns(1))
-    ]).setRarity(Rarity.BASIC)
+      new AbilityDiscardSelfCard(2).setText(`Discard {formula} cards.`)
+    ]).setRarity(Rarity.COMMON)
   ],
-  romance: [],
   poop_deck: [
     new Card(`Pile o' Crap`, [
       new TextAbility(`\uD83D\uDCA9`)
     ]).setRarity(Rarity.BASIC).setProp("crap", true)
   ],
   basic: [
-    new Card(`Just Do Better`, [
-      new AbilityAddDeck("romance", 75, true).setText(`Invent romance. Add it to the game.`),
-      new AbilityAddResource(5, "love"),
-      new AbilityRemoveOtherCopiesFromGame
-    ]).setRarity(Rarity.RARE),
     new Card(`You Could Make a Religion Outta This`, [
-      new AbilityAddDeck(`faith_deck`, 75, true).setText("Invent religion."),
+      new AbilityAddDeck("faith_deck"),
       new AbilityAddResource(1, "faith"),
-      new AbilityRemoveOtherCopiesFromGame
-    ]).setRarity(Rarity.RARE),
-    new Card(`What's the Point?`, [
-      new AbilityAddDeck("point_deck", 75, true).setText(`Invent points. Add points to the game.`),
-      new AbilitySetPropAll("points_to_win", 100).setText("First player to 100 points wins on their next turn!"),
-      new AbilityAddEventToAll(["play"], (abilityArgs) => {
-        if (abilityArgs.card.getProp("point_value")) {
-          let points = abilityArgs.card.getProp("point_value") ?? 0;
-          points *= 0.75 + abilityArgs.card.pow() * 0.25;
-          abilityArgs.owner.setProp("points", (abilityArgs.owner.getProp("points") ?? 0) + points, abilityArgs);
-        }
-      }).setText("Whenever someone plays a card, they get however many points that card is worth."),
-      new AbilityAddEventToAll(["points_change"], (abilityArgs) => {
-        if (abilityArgs.owner.getProp("points") >= abilityArgs.owner.getProp("points_to_win")) {
-          abilityArgs.owner.setCanWin(true, "saw the point");
-        }
-      }).setText("Every time someone's score changes, check if they can win."),
-      new BaseAbility("For each card in the deck, assign a random point value!", [], (abilityArgs, madeChoices) => {
-        let points = [-7, -5, -3, -2, -2, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 5, 10];
-        for (let card of abilityArgs.deck.asArray()) {
-          card.setProp("point_value", points[Math.floor(Math.random() * points.length)]);
+      new BaseAbility(`Everyone unlocks the ability to create a religion`, [], (args) => {
+        for (let player of [args.owner, ...args.opps]) {
+          player.setProp("religion", true, args);
         }
       }),
       new AbilityRemoveOtherCopiesFromGame
-    ]).setRarity(Rarity.LEGENDARY),
-    new Card(`Agonize over a Decision`, [
-      new AbilityDrawCard(3),
-      new AbilityDiscardSelfCard(3)
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Skip Bitch`, [
-      new BaseAbility(`Skip an opponents turn`, [
-        { pointer: Pointer.OPPONENT_MOST_CARDS, choice: Choices.OPPONENT }
-      ], (abilityArgs, madeChoices) => {
-        let opponent = madeChoices[0];
-        opponent.skip();
-      })
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Megaskip Bitch`, [
-      new BaseAbility(`Skip an opponents next {formula} turns`, [
-        { pointer: Pointer.OPPONENT_MOST_CARDS, choice: Choices.OPPONENT }
-      ], (abilityArgs, madeChoices) => {
-        let opponent = madeChoices[0];
-        opponent.skip();
-        opponent.skip();
-      }).setFormula(`1 + {pow}`)
-    ]).setRarity(Rarity.HAXOR),
-    new Card(`Housing Economy Crash`, [
-      new BaseAbility(`Each player discards all cards above common rarity`, [], (abilityArgs, madeChoices) => {
-        let players = [abilityArgs.owner, ...abilityArgs.opps];
-        for (let player of players) {
-          let hand = player.cih().filter((card) => {
-            if (!card) {
-              return false;
-            }
-            return card.getRarity() > Rarity.COMMON;
-          });
-          for (let card of hand) {
-            player.discard(card, abilityArgs.deck);
-          }
-        }
-      })
-    ]).setRarity(Rarity.RARE),
-    new Card(`Tactical Cuckage`, [
-      new AbilityDiscardOppCardRandom(2),
-      new AbilityDiscardSelfCard(3),
-      new BaseAbility(`Make an opponent skip a turn`, [
-        { pointer: Pointer.OPPONENT_MOST_CARDS, choice: Choices.OPPONENT }
-      ], (abilityArgs, madeChoices) => {
-        let opponent = madeChoices[0];
-        opponent.skip();
-      }),
-      new AbilityDrawCard(1)
-    ]).setRarity(Rarity.MYTHIC),
-    new Card(`\u26A1\u26A1 Supercharge \u26A1\u26A1`, [
-      new AbilityIncreasePower(0)
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Gifts of Giving`, [
-      new AbilityDrawCard(1),
-      new AbilitySymDraw(1)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Minor Cucking`, [
-      new AbilityDiscardOppCard(1)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Gifted Sabotage`, [
-      new AbilityDiscardSelfCard(2)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Basic Bitchery`, [
-      new AbilityDrawCard(1)
-    ]).setRarity(Rarity.BASIC),
-    new Card(`Change of Perspective`, [
-      new AbilityDiscardHandDrawCards(2)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Speedbump`, [
-      new BaseAbility(`Increase everyone else's cards to play by {formula}`, [], (a, m) => {
-        a.opps.forEach((p) => {
-          p.addTurns(a.card.pow());
-        });
-      })
-    ]).setRarity(Rarity.BASIC),
-    new Card(`Encrust in Gold`, [
-      new BaseAbility(`Increase a card in your hands rarity. It gains {formula} power`, [
-        { choice: Choices.CARD_IN_HAND, pointer: Pointer.CARD_IN_HAND_LEAST_POWER }
-      ], (a, c) => {
-        let card = c[0];
-        card.setRarity(card.getRarity() + 1);
-        card.setPow(card.pow() + a.card.pow() + 2);
-        card.setName(`Golden ${card.getName()} \uD83D\uDCB0\uD83D\uDCB0`);
-      }).setFormula(`{pow} + 2`)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Scrap Buyback`, [
-      new AbilityRecoverCards(1).setFormula(`{pow}`)
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Rough Breakup`, [
-      new AbilityExplodeCard,
-      new BaseAbility(`Reduce the power of cards in your hand by {formula}`, [], (a, c) => {
-        a.owner.cih().forEach((card) => {
-          card.setPow(card.pow() - a.card.pow());
-        });
-      }).setFormula(`{pow}`)
-    ]),
-    new Card(`Mutual Cuckage`, [
-      new BaseAbility(`Increase everyone's cards to play to win by {formula}`, [], (a, m) => {
-        [a.owner, ...a.opps].forEach((p) => {
-          p.addTurns(10 + a.card.pow());
-        });
-      }).setFormula(`10 + {pow}`)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Even the Playing Field`, [
-      new PlayerPredicateRestrictionAbility(`Play only if you aren't the first player`, (cardArgs) => {
-        return cardArgs.owner.getTurnPlacement() > 0;
-      }),
-      new BaseAbility(`Decrease your cards to play to win by {formula}`, [], (a, m) => {
-        a.owner.addTurns(-(3 + a.card.pow()));
-      }).setFormula(`3 + {pow}`)
-    ]).setRarity(Rarity.UNCOMMON),
-    new Card(`Denial`, [
-      new BaseAbility(`Increase an opponent's cards to play to win by {formula}`, [
-        { choice: Choices.OPPONENT, pointer: Pointer.OPPONENT_LEAST_TURNS_REMAINING }
-      ], (a, m) => {
-        let opp = m[0];
-        opp.addTurns(a.card.pow() * 2);
-      }).setFormula(`{pow} * 2`)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Get a Life`, [
-      new AbilityAddResource(10, "life"),
-      new AbilityAddDeck("life_deck", 50, true)
-    ]).setRarity(Rarity.RARE),
-    new Card(`Proletariat Revolution`, [
-      new PlayerPredicateRestrictionAbility(`Play only if you're the first player`, (c) => {
-        return c.owner.getTurnPlacement() === 0;
-      }),
-      new BaseAbility(`Draw {formula} cards.`, [], (abilityArgs, madeChoices) => {
-        if (abilityArgs.owner.getTurnPlacement() === 0) {
-          abilityArgs.owner.draw(abilityArgs.deck, abilityArgs.card.pow() + 2);
-        }
-      }).setFormula(`{pow} + 2`)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Beanz It`, [
-      new BaseAbility(`Add "Add {formula} turns to an opponent" to a card in your hand.`, [
-        { choice: Choices.CARD_IN_HAND, pointer: Pointer.CARD_IN_HAND_RANDOM }
-      ], (a, m) => {
-        let card = m[0];
-        card.setName(`Bean-Fueled ${card.getName()} \uD83E\uDED8`);
-        card.addAbility(new AbilityAddTurnsOpp(a.card.pow() - card.pow()));
-      }).setFormula(`{pow}`)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Community Service Project`, [
-      new BaseAbility(`Add "Draw {formula} card" to a card in your hand.`, [
-        { choice: Choices.CARD_IN_HAND, pointer: Pointer.CARD_IN_HAND_RANDOM }
-      ], (a, m) => {
-        let card = m[0];
-        card.setName(`Wizened ${card.getName()}`);
-        card.addAbility(new AbilityDrawCard(a.card?.pow() - card.pow()));
-      }).setFormula(`{pow}`)
-    ]).setRarity(Rarity.COMMON),
-    new Card(`Academia`, [
-      new AbilityAddDeck("academia_deck", 100, true).setText(`Invent student loans. Add academia to the game.`),
-      new AbilityRemoveOtherCopiesFromGame
-    ]).setRarity(Rarity.RARE),
-    new Card(`Currency`, [
-      new AbilityAddDeck("currency_deck", 100, true, true).setText(`Invent currency. Add currency to the game.`),
-      new AbilityUnlockUpgrade(new Upgrade({
-        name: "Get a Job",
-        description: "Search for a job in Alaska.",
-        cost: [{
-          amt: 3,
-          resource: "turns"
-        }],
-        locked: false
-      }, (cardArgs) => {
-        let p = cardArgs.owner;
-        p.addUpgrade(new Upgrade({
-          name: "Work",
-          description: "Work for 50 Tadbucks.",
-          cost: [{
-            amt: 1,
-            resource: "turns"
-          }]
-        }, (cardArgs2) => {
-          cardArgs2.owner.addResource("tadbucks", 50);
-        }, true, 1.2));
-      })).setText("You also invent the idea of working for pay."),
-      new AbilityRemoveOtherCopiesFromGame
-    ]).setRarity(Rarity.RARE)
+    ]).setRarity(Rarity.LEGENDARY)
   ]
 };
 var DeckList_default = DeckList2;
+
+// logic/gameplay/deck/Deck.ts
+class Deck2 extends Array {
+  constructor() {
+    super(...arguments);
+  }
+  discardPile = [];
+  props = {};
+  set(card) {
+    this.splice(0, this.length, ...card);
+    return this;
+  }
+  asArray() {
+    return this;
+  }
+  addCard(card, amt = 1) {
+    for (let i = 0;i < amt; i++) {
+      this.push(card.clone().setZone(Zone.DECK));
+    }
+    return this;
+  }
+  addCards(cards) {
+    this.push(...cards.map((card) => card.clone().setZone(Zone.DECK)));
+    return this;
+  }
+  shuffle() {
+    for (let i = this.length - 1;i > 0; i--) {
+      const j = Math.floor(Math.random() * i);
+      const temp = this[i];
+      this[i] = this[j];
+      this[j] = temp;
+    }
+  }
+  reshuffle() {
+    this.push(...this.discardPile.map((card) => card.setZone(Zone.DECK)));
+    this.discardPile = [];
+    this.shuffle();
+  }
+  draw(qty = 1) {
+    let cards = [];
+    for (let i = 0;i < qty; i++) {
+      if (this.length === 0) {
+        this.reshuffle();
+      }
+      cards.push(this.pop().setZone(Zone.HAND));
+    }
+    return cards;
+  }
+  static fromCardList(size, deckName) {
+    let cards = DeckList_default[deckName];
+    let rarityMap = {};
+    for (let card of cards) {
+      if (!rarityMap[card.getRarity()])
+        rarityMap[card.getRarity()] = 0;
+      rarityMap[card.getRarity()]++;
+    }
+    let rarityWeights = {};
+    let total = 0;
+    for (let rarity of Object.keys(rarityMap)) {
+      rarityWeights[rarity] = size * Math.pow(0.75, Object.keys(rarityMap).indexOf(rarity));
+      total += rarityWeights[rarity];
+    }
+    for (let rarity of Object.keys(rarityMap)) {
+      rarityWeights[rarity] = Math.round(rarityWeights[rarity] / total * size);
+    }
+    let deck = new Deck2;
+    for (let card of cards) {
+      deck.addCard(card.clone(), rarityWeights[card.getRarity()]);
+    }
+    return deck;
+  }
+}
+
+// logic/gameplay/player/systems/Upgrade.ts
+class Upgrade {
+  data;
+  effect;
+  infinite = false;
+  scale = 1.1;
+  constructor(data, effect, infinite = false, scale = 1.1) {
+    this.data = JSON.parse(JSON.stringify(data));
+    if (!this.data.level) {
+      this.data.level = 0;
+    }
+    this.effect = effect;
+    this.infinite = infinite;
+    this.scale = scale;
+  }
+  lvl() {
+    return this.data.level;
+  }
+  getCost() {
+    return this.data.cost;
+  }
+  getData(cardArgs) {
+    return {
+      name: this.getName(),
+      description: this.getDescription(),
+      cost: this.getCost(),
+      locked: this.data.locked || !this.canPayCost(cardArgs),
+      level: this.data.level
+    };
+  }
+  getName() {
+    return `${this.data.name}${this.infinite && this.data.level > 0 ? ` Lvl. ${this.data.level}` : ``}`;
+  }
+  getDescription() {
+    let text = this.data.description;
+    text = text.replace(`{level}`, this.level + "");
+    let matches = text.match(/{[^}]*}/g);
+    if (matches) {
+      for (let match of matches) {
+        let code = match.substring(1, match.length - 1);
+        text = text.replace(match, (0, eval)(code));
+      }
+    }
+    return text;
+  }
+  canPayCost(cardArgs) {
+    let available_resources = cardArgs.owner.getResources();
+    for (let cost of this.data.cost) {
+      if (cost.resource == "turns")
+        continue;
+      if (!available_resources[cost.resource])
+        return false;
+      if (available_resources[cost.resource] < cost.amt) {
+        return false;
+      }
+    }
+    return true;
+  }
+  payCost(cardArgs) {
+    let available_resources = cardArgs.owner.getResources();
+    for (let cost of this.data.cost) {
+      if (cost.resource === "turns") {
+        cardArgs.owner.addTurns(cost.amt);
+        continue;
+      } else {
+        cardArgs.owner.setProp(`res_${cost.resource}`, available_resources[cost.resource] - cost.amt, cardArgs);
+      }
+    }
+  }
+  locked() {
+    return this.data.locked;
+  }
+  unlock(cardArgs) {
+    if (!this.data.locked) {
+      this.payCost(cardArgs);
+      this.effect(cardArgs, this);
+      this.level++;
+      if (!this.infinite) {
+        this.data.locked = true;
+      } else {
+        for (let cost of this.data.cost) {
+          cost.amt = Math.ceil(cost.amt * this.scale);
+        }
+      }
+    }
+  }
+}
 
 // logic/structure/utils/TurnInterrupt.ts
 var TurnInterrupt;
 (function(TurnInterrupt2) {
   TurnInterrupt2[TurnInterrupt2["DISCARD_FROM_HAND"] = 0] = "DISCARD_FROM_HAND";
+  TurnInterrupt2[TurnInterrupt2["GIVE_TO_CONTROLLER"] = 1] = "GIVE_TO_CONTROLLER";
 })(TurnInterrupt || (TurnInterrupt = {}));
+
+// logic/structure/CardSlottable.ts
+class CardSlottable {
+  structure = [];
+  addCard(args, tier = 0) {
+    if (this.getValidTiers(args.card).includes(tier)) {
+      this.slots[tier] = args.card;
+      args.card.onSlottable(args);
+      return true;
+    } else if (this.isValid(args.card)) {
+      for (let i of this.getValidTiers(args.card)) {
+        if (this.slots[i] === undefined) {
+          this.slots[i] = args.card;
+          args.card.onSlottable(args);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+}
+
+// logic/gameplay/player/systems/Religion.ts
+class Religion extends CardSlottable {
+  structure;
+  slots = [];
+  name;
+  props;
+  constructor(name) {
+    super();
+    this.structure = [
+      {
+        name: "Foundation",
+        slots: 1
+      },
+      {
+        name: "Pillars",
+        slots: 1
+      },
+      {
+        name: "Doctrine",
+        slots: 1
+      }
+    ];
+    this.slots.fill(undefined, 0, this.structure.length);
+  }
+  getValidTiers(card) {
+    return card.getProp(PropEnums.RELIGION) ?? [];
+  }
+  addCard(args, tier = 0) {
+    return super.addCard(args, tier);
+  }
+  getCards() {
+    return this.slots;
+  }
+  getCardsOfTier(tier) {
+    return [this.slots[tier]];
+  }
+  getName() {
+    return this.name;
+  }
+  setName(name) {
+    this.name = name;
+    return this;
+  }
+  getProp(prop) {
+    return this.props[prop];
+  }
+  getProps() {
+    return this.props;
+  }
+  isValid(card) {
+    return card.getProp(PropEnums.RELIGION) !== undefined && card.getProp(PropEnums.RELIGION).filter((tier) => {
+      return this.slots[tier] === undefined;
+    }).length > 0;
+  }
+  setProp(prop, value, args) {
+    this.props[prop] = args ? new ResolverCallback(value).resolve(args) : value;
+    return this;
+  }
+  toState(args) {
+    return {
+      name: this.name,
+      props: this.props,
+      structure: this.structure,
+      slots: this.slots.map((card) => {
+        return card.toState(args);
+      }),
+      validity: args.owner.cih().map((card) => {
+        return this.isValid(card);
+      })
+    };
+  }
+}
 
 // logic/gameplay/player/Player.ts
 class Player {
@@ -2437,11 +1378,13 @@ class Player {
   host = false;
   botProfile = undefined;
   resolveBeforeTurn = [];
+  slottedAbilities = [];
   eventList = {};
   constructor(cards, deck) {
     this.name = Math.random().toString(36).substring(7);
     this.draw(deck, cards);
-    this.setProp("meta_upgrade", []);
+    this.setProp(PropEnums.UPGRADE_SHOP, []);
+    this.setProp(PropEnums.RELIGION, new Religion("Da Faith"));
     this.addUpgrade(new Upgrade({
       name: "Take a Crap",
       description: "Take a bathroom break to draw a card.",
@@ -2452,7 +1395,7 @@ class Player {
       locked: false
     }, (cardArgs) => {
       cardArgs.owner.draw(cardArgs.deck, 1);
-      cardArgs.deck.addCards(Deck.fromCardList(1, DeckList_default["poop_deck"]));
+      cardArgs.deck.addCards(Deck2.fromCardList(1, "poop_deck"));
     }, true, 1.5));
     this.addEvent("draw", (cardArgs) => {
       if (!cardArgs.card)
@@ -2465,6 +1408,7 @@ class Player {
           given: 0,
           text: ""
         };
+      cardArgs.card.fireEvents("draw", cardArgs);
       this.eventList[cardArgs.card.getName()].drawn++;
       this.eventList[cardArgs.card.getName()].text = cardArgs.card.getText();
     });
@@ -2512,12 +1456,20 @@ class Player {
         if (!cardArgs.deck)
           return;
         if (!cardArgs.deck.props["added_zombie_deck"]) {
-          cardArgs.deck.addCards(Deck.fromCardList(45, DeckList_default["zombie_deck"]));
+          cardArgs.deck.addCards(Deck2.fromCardList(45, "zombie_deck"));
           cardArgs.deck.shuffle();
           cardArgs.deck.props["added_zombie_deck"] = true;
         }
       }
     });
+  }
+  addSlottedAbility(ability) {
+    this.slottedAbilities.push(ability);
+    return this;
+  }
+  removeSlottedAbility(ability) {
+    this.slottedAbilities.splice(this.slottedAbilities.indexOf(ability), 1);
+    return this;
   }
   addResource(key, amt) {
     if (key.startsWith("res_"))
@@ -2527,12 +1479,15 @@ class Player {
     this.setProp(`res_${key}`, this.getProp(`res_${key}`) + amt);
   }
   upgrades() {
-    return this.props["meta_upgrade"] || [];
+    return this.props[PropEnums.UPGRADE_SHOP] || [];
+  }
+  religion() {
+    return this.props[PropEnums.RELIGION] || undefined;
   }
   addUpgrade(u) {
-    if (!this.props["meta_upgrade"])
-      this.props["meta_upgrade"] = [];
-    this.props["meta_upgrade"].push(u);
+    if (!this.props[PropEnums.UPGRADE_SHOP])
+      this.props[PropEnums.UPGRADE_SHOP] = [];
+    this.props[PropEnums.UPGRADE_SHOP].push(u);
     this.fireEvents("new_upgrade", { owner: this, opps: [], deck: undefined, card: undefined });
   }
   setHost(host = true) {
@@ -2554,10 +1509,8 @@ class Player {
   }
   getUIs() {
     return {
-      marketplace: this.props["marketplace"] || false,
-      gene_bank: this.props["gene_bank"] || false,
-      casino: this.props["casino"] || false,
-      upgrade: true
+      upgrade: true,
+      religion: this.props["religion"] || false
     };
   }
   getRelevantProps() {
@@ -2586,24 +1539,11 @@ class Player {
     };
   }
   getCards(opps, deck) {
-    return this.cards.map((x) => ({
-      name: x.getDisplayName(),
-      text: x.getFormulatedText({
-        owner: this,
-        opps,
-        deck,
-        card: x
-      }),
-      rarity: x.getRarity(),
-      power: x.pow(),
-      formula: x.getFormulas(),
-      props: x.getProps(),
-      playable: x.canBePlayed({
-        owner: this,
-        opps,
-        deck,
-        card: x
-      })
+    return this.cards.map((x) => x.toState({
+      owner: this,
+      opps,
+      deck,
+      card: x
     }));
   }
   setBot() {
@@ -2668,6 +1608,14 @@ class Player {
         func(cardArgs);
       }
       delete this.events[`temp_${name}`];
+    }
+    for (let ability of this.slottedAbilities) {
+      let events = ability.playerEvents();
+      if (events[name]) {
+        for (let func of events[name]) {
+          func(cardArgs);
+        }
+      }
     }
   }
   addTurns(mod) {
@@ -2834,6 +1782,13 @@ class Player {
       this.discardRandom(cardArgs);
     }
   }
+  giveChoose(cardArgs) {
+    if (this.isBot()) {
+      this.give(this.weightedGive(cardArgs), cardArgs.opps[0]);
+    } else {
+      this.resolveBeforeTurn.push(TurnInterrupt.GIVE_TO_CONTROLLER);
+    }
+  }
   discardChoose(cardArgs) {
     if (this.isBot()) {
       let card = this.weightedDiscard(cardArgs);
@@ -2943,16 +1898,19 @@ var CommEnum;
   CommEnum2[CommEnum2["TRANSFER_UPGRADE_SHOP"] = 7] = "TRANSFER_UPGRADE_SHOP";
   CommEnum2[CommEnum2["BUY_UPGRADE"] = 8] = "BUY_UPGRADE";
   CommEnum2[CommEnum2["TRANSFER_MARKETPLACE"] = 9] = "TRANSFER_MARKETPLACE";
-  CommEnum2[CommEnum2["DRAW_CARD"] = 10] = "DRAW_CARD";
-  CommEnum2[CommEnum2["PLAY_CARD"] = 11] = "PLAY_CARD";
-  CommEnum2[CommEnum2["GIVE_CARD"] = 12] = "GIVE_CARD";
-  CommEnum2[CommEnum2["DISCARD_TO_HAND"] = 13] = "DISCARD_TO_HAND";
-  CommEnum2[CommEnum2["GET_CHOICES"] = 14] = "GET_CHOICES";
-  CommEnum2[CommEnum2["CHOICE_LIST"] = 15] = "CHOICE_LIST";
-  CommEnum2[CommEnum2["PLAY_PHASE_CONFIRM"] = 16] = "PLAY_PHASE_CONFIRM";
-  CommEnum2[CommEnum2["SEND_INTERRUPTS"] = 17] = "SEND_INTERRUPTS";
-  CommEnum2[CommEnum2["RESOLVE_INTERRUPT"] = 18] = "RESOLVE_INTERRUPT";
-  CommEnum2[CommEnum2["ERROR"] = 19] = "ERROR";
+  CommEnum2[CommEnum2["TRANSFER_RELIGION"] = 10] = "TRANSFER_RELIGION";
+  CommEnum2[CommEnum2["ADD_RELIGIOUS_TENANT"] = 11] = "ADD_RELIGIOUS_TENANT";
+  CommEnum2[CommEnum2["CREATE_RELIGION"] = 12] = "CREATE_RELIGION";
+  CommEnum2[CommEnum2["DRAW_CARD"] = 13] = "DRAW_CARD";
+  CommEnum2[CommEnum2["PLAY_CARD"] = 14] = "PLAY_CARD";
+  CommEnum2[CommEnum2["GIVE_CARD"] = 15] = "GIVE_CARD";
+  CommEnum2[CommEnum2["DISCARD_TO_HAND"] = 16] = "DISCARD_TO_HAND";
+  CommEnum2[CommEnum2["GET_CHOICES"] = 17] = "GET_CHOICES";
+  CommEnum2[CommEnum2["CHOICE_LIST"] = 18] = "CHOICE_LIST";
+  CommEnum2[CommEnum2["PLAY_PHASE_CONFIRM"] = 19] = "PLAY_PHASE_CONFIRM";
+  CommEnum2[CommEnum2["SEND_INTERRUPTS"] = 20] = "SEND_INTERRUPTS";
+  CommEnum2[CommEnum2["RESOLVE_INTERRUPT"] = 21] = "RESOLVE_INTERRUPT";
+  CommEnum2[CommEnum2["ERROR"] = 22] = "ERROR";
 })(CommEnum || (CommEnum = {}));
 
 // runtime/Server.ts
@@ -2965,7 +1923,7 @@ function adjustAIWeights(num_sims = 100, console_output = true) {
   let iter = 0;
   let sims = 100;
   for (let s = sims;s > 0; s--) {
-    let deck = Deck.fromCardList(300, DeckList_default["basic"]);
+    let deck = Deck2.fromCardList(300, "basic");
     let bots = [];
     for (let i = 0;i < 3 + sims % 3; i++) {
       bots.push(new Player(7, deck).setBot());
@@ -3023,14 +1981,14 @@ class GameServer {
   };
   booted = false;
   constructor() {
-    this.deck = Deck.fromCardList(60, DeckList_default.basic);
+    this.deck = Deck2.fromCardList(60, "basic");
     this.deck.shuffle();
   }
   reset() {
     if (this.serverObj) {
       this.serverObj.close();
     }
-    this.deck = Deck.fromCardList(60, DeckList_default.basic);
+    this.deck = Deck2.fromCardList(60, "basic");
     this.deck.shuffle();
     this.sockets = {};
     this.players = {};
@@ -3215,11 +2173,24 @@ class GameServer {
     this.getActive().weightedDiscardToHand(baseArgs);
     this.incrementTurn();
   }
+  updateReligion(id) {
+    if (this.players[id].religion()) {
+      let ws = this.sockets[id];
+      ws.send(JSON.stringify({
+        type: CommEnum.TRANSFER_RELIGION,
+        religion: this.players[id].religion().toState({
+          owner: this.players[id],
+          opps: [],
+          deck: this.deck
+        })
+      }));
+    }
+  }
   updateUpgradeShop(id) {
     let ws = this.sockets[id];
     ws.send(JSON.stringify({
       type: CommEnum.TRANSFER_UPGRADE_SHOP,
-      shop: this.getActive().getProp(`meta_upgrade`).map((upgrade) => {
+      shop: this.players[id].getProp(`meta_upgrade`).map((upgrade) => {
         return upgrade.getData({
           owner: this.players[id],
           opps: [],
@@ -3574,6 +2545,45 @@ class GameServer {
               }));
             }
             break;
+          case CommEnum.TRANSFER_RELIGION:
+            if (server.players[id2].getUIs().religion) {
+              server.updateReligion(id2);
+            } else {
+              ws.send(JSON.stringify({
+                type: CommEnum.ERROR,
+                message: "You haven't unlocked religion yet."
+              }));
+            }
+            break;
+          case CommEnum.ADD_RELIGIOUS_TENANT:
+            let tenantToAdd = result.idInHand;
+            if (server.players[id2].cih().length < tenantToAdd + 1 || !server.players[id2].cih()[tenantToAdd]) {
+              ws.send(JSON.stringify({
+                type: CommEnum.ERROR,
+                message: "You can't add this tenant - invalid tenant."
+              }));
+            } else if (!server.players[id2].getUIs().religion) {
+              ws.send(JSON.stringify({
+                type: CommEnum.ERROR,
+                message: "You haven't unlocked religion yet."
+              }));
+            } else if (!server.players[id2].religion()) {
+              ws.send(JSON.stringify({
+                type: CommEnum.ERROR,
+                message: "You don't have a religion."
+              }));
+            } else if (server.players[id2].religion().isValid(server.players[id2].cih()[tenantToAdd])) {
+              server.players[id2].religion().addCard({
+                owner: server.players[id2],
+                opps,
+                deck: server.deck,
+                card: server.players[id2].cih()[tenantToAdd].clone()
+              });
+              server.players[id2].setCiH(server.players[id2].cih().filter((x) => x !== server.players[id2].cih()[tenantToAdd]));
+              server.updateReligion(id2);
+              server.incrementPhase();
+            }
+            break;
           case CommEnum.RESOLVE_INTERRUPT:
             let playerInterrupts = server.players[id2].getInterrupts();
             let targets = result.interrupts;
@@ -3584,6 +2594,7 @@ class GameServer {
               }));
             } else {
               let cardsToDiscard = [];
+              let cardsToGiveToActive = [];
               for (let i = 0;i < targets.length; i++) {
                 switch (playerInterrupts[i]) {
                   case TurnInterrupt.DISCARD_FROM_HAND:
@@ -3591,10 +2602,18 @@ class GameServer {
                       cardsToDiscard.push(server.players[id2].cih()[targets[i]]);
                     }
                     break;
+                  case TurnInterrupt.GIVE_TO_CONTROLLER:
+                    if (server.players[id2].cih().length > 0 && server.players[id2].cih()[targets[i]]) {
+                      cardsToGiveToActive.push(server.players[id2].cih()[targets[i]]);
+                    }
+                    break;
                 }
               }
               cardsToDiscard.forEach((card2) => {
                 server.players[id2].discard(card2, server.deck);
+              });
+              cardsToGiveToActive.forEach((card2) => {
+                server.players[id2].give(card2, server.getActive());
               });
               server.players[id2].clearInterrupts();
             }
